@@ -1,7 +1,7 @@
 # Reusable: the PR title becomes the squash commit on main, so it must be a Conventional Commit and never a `test:`
 # (with test-first the first commit of a branch is the test; the title must name the change). Callers:
 #   on: {pull_request: {types: [opened, edited, synchronize, reopened]}}
-#   jobs: {title: {uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}
+#   jobs: {title: {permissions: {pull-requests: read}, uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}
 name: pr-title
 on:
   workflow_call: {}
