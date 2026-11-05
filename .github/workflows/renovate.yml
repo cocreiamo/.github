@@ -1,0 +1,47 @@
+name: renovate
+
+# Self-hosted Renovate, nightly (Europe/Rome 03:17-04:17), authenticated as the existing GitHub App
+# cocreiamo-claude-code-pr (variable CLAUDE_CODE_PR_APP_ID, secret CLAUDE_CODE_PR_APP_PRIVATE_KEY). The token is
+# scoped to this repository and to cocreiamo/.github (the preset and the reusable workflows, both private).
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: renovate
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 30
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
+          owner: cocreiamo
+          repositories: .github
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: write
+      - uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
+        with:
+          token: ${{ steps.token.outputs.token }}
+          renovate-version: 44.219.0@sha256:7ae452492cd2393dbb8d401c6a3e7569bb7e6b5a7d2783739a6e4af576fd248a
+          # Docker is the host's rootless daemon: only the job's work folder has the same path on both sides, and only
+          # the container's root maps to the user that owns it.
+          docker-user: root
+          docker-volumes: ${{ runner.temp }}:/tmp
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: required
+          # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; nothing else may run.
+          RENOVATE_EXPOSE_ALL_ENV: "true"
+          RENOVATE_ALLOWED_COMMANDS: '["^bash -c ''curl -fsSL -H \"Authorization: Bearer [$]RENOVATE_TOKEN\" -H \"Accept: application/vnd[.]github[.]raw\" \"https://api[.]github[.]com/repos/cocreiamo/[.]github/contents/renovate/sync-founder-section[.]sh[?]ref=[0-9a-f]{40}\" [|] bash -s -- [0-9a-f]{40}''$"]'

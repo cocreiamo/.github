@@ -12,8 +12,14 @@ Managed by cocreiamo/infrastructure (`tofu/github`).
 
 `bash tests/claude-telemetry.sh` proves that `.claude/settings.json` sends Claude Code telemetry to `otel.cocreiamo.com` (this repository sets it like the others).
 
-Callers pin a commit SHA; Renovate proposes the bumps. `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
+Callers pin a commit SHA; Renovate proposes the bumps (see «Renovate»). `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
 
 ## Shared rules
 
 `shared/working-with-the-founder.md` is the one canonical copy of the section `## Working with the founder`, present in the `CLAUDE.md` of infrastructure, deploy and cocreiamo. A caller's token cannot read this private repository's files, so `shared-rules.yml` embeds the text and `tests/shared-rules.sh` keeps the embedded copy equal to the file. To change the rule: edit both here (the test fails otherwise), merge, then in each repository bump the pin of `shared-rules.yml` and carry the new text into its `CLAUDE.md`: until it does, its `rules / check` is red and the merge is blocked. Every caller must grant its job the permission the workflow needs (`pr-title.yml`: `pull-requests: read`; `shared-rules.yml`: `contents: read`), or the run is a `startup_failure`; each repository's checks require it.
+
+## Renovate
+
+Dependency updates are one self-hosted Renovate per repository: a nightly `renovate.yml` on the `[self-hosted, cocreiamo-ci]` runners, authenticated as the existing GitHub App `cocreiamo-claude-code-pr` (repository variable `CLAUDE_CODE_PR_APP_ID`, repository secret `CLAUDE_CODE_PR_APP_PRIVATE_KEY`; the key is in the SOPS file of cocreiamo/infrastructure as `CLAUDE_CODE_PR_APP_PRIVATE_KEY` and in the offline seed). Each repository's `renovate.json` extends `github>cocreiamo/.github//renovate/default` and names its managers.
+
+`renovate/default.json` is the shared preset: `config:recommended`, action digests pinned, semantic commit titles that pass `pr-title.yml` (`ci(deps)` actions, `build(deps)` providers and mise tools, `chore(deps)` the rest), platform automerge of minor, patch and digest updates once the required checks are green, the dependency dashboard, and one group each for actions, providers and mise tools. A bump of the pin of `shared-rules.yml` merges by itself, and its `postUpgradeTasks` runs `renovate/sync-founder-section.sh` (fetched at the new pin) to rewrite the repository's `CLAUDE.md` founder section to the canonical text, so `rules / check` passes on the bump PR. The only command a Renovate run may execute is the one in `renovate/allowed-commands.regex`, set as `RENOVATE_ALLOWED_COMMANDS` in each `renovate.yml`. `bash tests/renovate-config.sh` validates the configs strictly (`renovate-config-validator`, pinned in `mise.toml`) and proves an invalid one is refused; `bash tests/sync-founder-section.sh` proves the sync.
