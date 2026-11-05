@@ -12,6 +12,8 @@ permissions:
 jobs:
   title:
     if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
     uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
   check:
     runs-on: [self-hosted, cocreiamo-ci]
