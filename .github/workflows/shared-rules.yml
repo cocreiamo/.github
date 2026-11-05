@@ -1,0 +1,50 @@
+# Reusable: the repository's CLAUDE.md carries, byte for byte, the canonical shared section (shared/working-with-the-founder.md,
+# embedded below because a caller's token cannot read this private repository's files; tests/shared-rules.sh keeps the two equal).
+# Callers pin the commit, so the text a repository is held to changes only when it bumps the pin:
+#   on: {pull_request: {types: [opened, synchronize, reopened]}}
+#   jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}
+name: shared-rules
+on:
+  workflow_call: {}
+permissions: {}
+jobs:
+  check:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: start from an empty workspace
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: CLAUDE.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: CLAUDE.md carries the canonical section
+        env:
+          CANONICAL: |-
+            ## Working with the founder
+
+            This section has one canonical copy: `shared/working-with-the-founder.md` in cocreiamo/.github. Change it there; the `rules / check` of every repository fails until its `CLAUDE.md` carries the same text at the pinned ref of that workflow.
+
+            - Answer first, then act. Every failure report has four parts in plain words: facts, root cause (why it was possible), how the class is closed (the check, proven red), what remains open. After every agent report: a critical read and corrective recommendations. Every 4-5 replies: a short recap (in progress, what is missing in order, known debt).
+            - A spoken yes is enough: act yourself (applies, playbooks, cleanups, dashboards through Claude in Chrome, accepting permission updates of our own GitHub Apps) and report the outcome; never hand the founder a command you can run. A rebuild-from-scratch drill runs only when the founder asks for it.
+            - A rule that depends on someone remembering it becomes a default or a check that fails. Before building any mechanism (script, check, controller, workflow), search for an existing free, maintained tool or a native feature of what we already run, and name it in the proposal; build our own only when none fits, and say why. The same applies to services: free tier or open source first.
+            - Read a file before editing it; never put an action (apply, push, bootstrap, cluster write) in the same parallel batch as the edits it depends on; cluster changes go through tasks or PRs, and you say beforehand what an action will touch.
+            - Agents: briefs ask for foreground commands (an agent's background waits wake the coordinator for nothing). Never `pkill -f` or `pgrep -f` on a pattern contained in your own command line (the shell matches itself): stop background tasks by their ID or by exact PIDs.
+        run: |
+          set -euo pipefail
+          [ -f CLAUDE.md ] || { echo "::error::no CLAUDE.md in the repository"; exit 1; }
+          heading='## Working with the founder'
+          section=$(awk -v h="$heading" '
+            $0 == h { f = 1 }
+            f && /^## / && $0 != h { exit }
+            f { if ($0 == "") { blank = blank "\n"; next } printf "%s", blank; blank = ""; print }
+          ' CLAUDE.md)
+          [ -n "$section" ] || { echo "::error::CLAUDE.md has no '$heading' section"; exit 1; }
+          if ! diff -u <(printf '%s\n' "$CANONICAL") <(printf '%s\n' "$section"); then
+            echo "::error::the '$heading' section of CLAUDE.md differs from shared/working-with-the-founder.md of cocreiamo/.github at the pinned commit (- canonical, + here): change it there and bump the pin, or restore the text"
+            exit 1
+          fi
+          echo "ok: the section is the canonical one"
