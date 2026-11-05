@@ -18,4 +18,8 @@ grep -Eq "$allowed" <<<"$cmd" || { echo "FAIL: the postUpgradeTasks command does
 if grep -Eq "$allowed" <<<"${cmd/sync-founder-section/other}"; then echo "FAIL: the allowed-commands regex accepts another script" >&2; exit 1; fi
 in_workflow=$(yq -N '.jobs.renovate.steps[] | select(.uses == "renovate*") | .env.RENOVATE_ALLOWED_COMMANDS' .github/workflows/renovate.yml | jq -r '.[0]')
 [ "$in_workflow" = "$allowed" ] || { echo "FAIL: renovate.yml allows a command other than renovate/allowed-commands.regex" >&2; exit 1; }
+for perm in statuses checks; do
+  [ "$(yq -N ".jobs.renovate.steps[] | select(.uses == \"actions/create-github-app-token*\") | .with.permission-$perm" .github/workflows/renovate.yml)" = read ] \
+    || { echo "FAIL: the token cannot read $perm: Renovate fails with integration-unauthorized when it reads a branch status" >&2; exit 1; }
+done
 echo "renovate-config ok"
