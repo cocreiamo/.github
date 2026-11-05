@@ -8,5 +8,10 @@ Managed by cocreiamo/infrastructure (`tofu/github`).
 | Workflow | What it checks | Call it |
 |---|---|---|
 | `pr-title.yml` | the PR title (the squash commit on main) is a Conventional Commit and not a `test:` | `jobs: {title: {uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}` on `pull_request` `[opened, edited, synchronize, reopened]` |
+| `shared-rules.yml` | `CLAUDE.md` carries, byte for byte, the section `## Working with the founder` of `shared/working-with-the-founder.md` | `jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}` on `pull_request` `[opened, synchronize, reopened]` |
 
-Callers pin a commit SHA; Renovate proposes the bumps. `bash tests/pr-title.sh` proves the check on good and bad titles.
+Callers pin a commit SHA; Renovate proposes the bumps. `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
+
+## Shared rules
+
+`shared/working-with-the-founder.md` is the one canonical copy of the section `## Working with the founder`, present in the `CLAUDE.md` of infrastructure, deploy and cocreiamo. A caller's token cannot read this private repository's files, so `shared-rules.yml` embeds the text and `tests/shared-rules.sh` keeps the embedded copy equal to the file. To change the rule: edit both here (the test fails otherwise), merge, then in each repository bump the pin of `shared-rules.yml` and carry the new text into its `CLAUDE.md`: until it does, its `rules / check` is red and the merge is blocked. Every caller must grant its job the permission the workflow needs (`pr-title.yml`: `pull-requests: read`; `shared-rules.yml`: `contents: read`), or the run is a `startup_failure`; each repository's checks require it.
