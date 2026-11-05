@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Runs the title check of .github/workflows/pr-title.yml on accepted and refused titles.
+# The title check must keep the agreed types and never allow `test`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-script=$(yq -N '.jobs.check.steps[0].run' .github/workflows/pr-title.yml)
-check() { TITLE="$1" bash -c "$script" >/dev/null 2>&1; }
-for t in "fix: kc reaches the API over SSH" "feat(ci): reusable PR title check" "docs: the founder section" "refactor!: one render helper"; do
-  check "$t" || { echo "FAIL: refused a good title: $t" >&2; exit 1; }
-done
-for t in "test: kc reaches the API over SSH" "test(ci): x y z" "Update README" "fix:no space" "feat: " "WIP"; do
-  if check "$t"; then echo "FAIL: accepted a bad title: $t" >&2; exit 1; fi
-done
+f=.github/workflows/pr-title.yml
+types=$(yq -N '.jobs.check.steps[0].with.types' "$f" | grep . | sort | paste -sd' ')
+want="build chore ci docs feat fix perf refactor revert style"
+[[ $types == "$want" ]] || { echo "FAIL: allowed types are '$types', want '$want'" >&2; exit 1; }
+[[ $(yq -N '.jobs.check.steps[0].with.requireScope' "$f") == false ]] || { echo "FAIL: scope must stay optional" >&2; exit 1; }
+yq -e '.jobs.check.steps[0].uses | test("^amannn/action-semantic-pull-request@[0-9a-f]{40} ?")' "$f" >/dev/null \
+  || { echo "FAIL: the action must be pinned by commit" >&2; exit 1; }
 echo "pr-title ok"

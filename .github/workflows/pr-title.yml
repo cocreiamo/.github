@@ -10,15 +10,26 @@ jobs:
   check:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 2
+    permissions:
+      pull-requests: read
     steps:
-      - name: the title is a Conventional Commit that names the change
+      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
         env:
-          TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -euo pipefail
-          re='^(feat|fix|docs|refactor|perf|build|ci|chore|style|revert)(\([a-z0-9._/-]+\))?!?: [^ ].{2,}$'
-          if [[ $TITLE =~ ^test(\(|:|!) ]]; then
-            echo "::error::the PR title is the commit on main: name the change (fix:/feat:/...), not its test: $TITLE"; exit 1
-          fi
-          [[ $TITLE =~ $re ]] || { echo "::error::not a Conventional Commit title (type(scope): subject): $TITLE"; exit 1; }
-          echo "ok: $TITLE"
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            perf
+            build
+            ci
+            chore
+            style
+            revert
+          scopes: |
+            [a-z0-9._/-]+
+          requireScope: false
+          subjectPattern: ^[^ ].{2,}$
+          subjectPatternError: the subject must name the change (at least 3 characters, no leading space)
