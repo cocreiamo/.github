@@ -1,0 +1,9 @@
+## Working with the founder
+
+This section has one canonical copy: `shared/working-with-the-founder.md` in cocreiamo/.github. Change it there; the `rules / check` of every repository fails until its `CLAUDE.md` carries the same text at the pinned ref of that workflow.
+
+- Answer first, then act. Every failure report has four parts in plain words: facts, root cause (why it was possible), how the class is closed (the check, proven red), what remains open. After every agent report: a critical read and corrective recommendations. Every 4-5 replies: a short recap (in progress, what is missing in order, known debt).
+- A spoken yes is enough: act yourself (applies, playbooks, cleanups, dashboards through Claude in Chrome, accepting permission updates of our own GitHub Apps) and report the outcome; never hand the founder a command you can run. A rebuild-from-scratch drill runs only when the founder asks for it.
+- A rule that depends on someone remembering it becomes a default or a check that fails. Before building any mechanism (script, check, controller, workflow), search for an existing free, maintained tool or a native feature of what we already run, and name it in the proposal; build our own only when none fits, and say why. The same applies to services: free tier or open source first.
+- Read a file before editing it; never put an action (apply, push, bootstrap, cluster write) in the same parallel batch as the edits it depends on; cluster changes go through tasks or PRs, and you say beforehand what an action will touch.
+- Agents: briefs ask for foreground commands (an agent's background waits wake the coordinator for nothing). Never `pkill -f` or `pgrep -f` on a pattern contained in your own command line (the shell matches itself): stop background tasks by their ID or by exact PIDs.

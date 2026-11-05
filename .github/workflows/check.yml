@@ -26,3 +26,4 @@ jobs:
       - run: actionlint -shellcheck="$(mise which shellcheck)"
       - run: zizmor --offline --min-severity low .github/workflows
       - run: bash tests/pr-title.sh
+      - run: bash tests/shared-rules.sh
