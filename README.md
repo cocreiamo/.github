@@ -10,6 +10,8 @@ Managed by cocreiamo/infrastructure (`tofu/github`).
 | `pr-title.yml` | the PR title (the squash commit on main) is a Conventional Commit and not a `test:` | `jobs: {title: {uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}` on `pull_request` `[opened, edited, synchronize, reopened]` |
 | `shared-rules.yml` | `CLAUDE.md` carries, byte for byte, the section `## Working with the founder` of `shared/working-with-the-founder.md` | `jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}` on `pull_request` `[opened, synchronize, reopened]` |
 
+`bash tests/claude-telemetry.sh` proves that `.claude/settings.json` sends Claude Code telemetry to `otel.cocreiamo.com` (this repository sets it like the others).
+
 Callers pin a commit SHA; Renovate proposes the bumps. `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
 
 ## Shared rules
