@@ -1,0 +1,26 @@
+name: check
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+jobs:
+  title:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
+  check:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ci-mise-setup
+      - run: actionlint -shellcheck="$(mise which shellcheck)"
+      - run: zizmor --offline --min-severity low .github/workflows
+      - run: bash tests/pr-title.sh
