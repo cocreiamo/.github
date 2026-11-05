@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 for f in renovate/default.json renovate.json; do
-  renovate-config-validator --no-global --strict "$f" >"$tmp/out" 2>&1 || { grep -E "^ *(ERROR|WARN: [^R])" "$tmp/out" >&2; echo "FAIL: $f is not a valid Renovate config" >&2; exit 1; }
+  renovate-config-validator --no-global --strict "$f" >"$tmp/out" 2>&1 || { tail -n 15 "$tmp/out" >&2; echo "FAIL: $f is not a valid Renovate config" >&2; exit 1; }
 done
 echo '{"extends": ["config:recommended"], "notAnOption": true}' > "$tmp/renovate.json"
 if (cd "$tmp" && renovate-config-validator --no-global --strict renovate.json) >/dev/null 2>&1; then
