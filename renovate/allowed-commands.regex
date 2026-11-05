@@ -1,0 +1,1 @@
+^bash -c 'curl -fsSL -H "Authorization: Bearer [$]RENOVATE_TOKEN" -H "Accept: application/vnd[.]github[.]raw" "https://api[.]github[.]com/repos/cocreiamo/[.]github/contents/renovate/sync-founder-section[.]sh[?]ref=[0-9a-f]{40}" [|] bash -s -- [0-9a-f]{40}'$

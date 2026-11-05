@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "cocreiamo defaults: every repository extends github>cocreiamo/.github//renovate/default",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommits"
+  ],
+  "timezone": "Europe/Rome",
+  "dependencyDashboard": true,
+  "platformAutomerge": true,
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 10,
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "packageRules": [
+    {
+      "description": "Actions and reusable workflows: ci(deps), one PR.",
+      "matchManagers": ["github-actions"],
+      "groupName": "actions",
+      "semanticCommitType": "ci"
+    },
+    {
+      "description": "OpenTofu providers and modules: build(deps), one PR.",
+      "matchManagers": ["terraform", "opentofu"],
+      "groupName": "providers",
+      "semanticCommitType": "build"
+    },
+    {
+      "description": "mise tools: build(deps), one PR.",
+      "matchManagers": ["mise"],
+      "groupName": "mise tools",
+      "semanticCommitType": "build"
+    },
+    {
+      "description": "Minor, patch and digest updates merge by themselves once the required checks are green; majors wait for a review.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest", "lockFileMaintenance"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Our own reusable workflows follow main: any bump of the pin merges once the checks are green, and the CLAUDE.md of the repository is rewritten to the canonical founder section of the new pin so that rules / check passes.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["cocreiamo/.github"],
+      "groupName": null,
+      "automerge": true,
+      "automergeType": "pr",
+      "postUpgradeTasks": {
+        "commands": [
+          "bash -c 'curl -fsSL -H \"Authorization: Bearer $RENOVATE_TOKEN\" -H \"Accept: application/vnd.github.raw\" \"https://api.github.com/repos/cocreiamo/.github/contents/renovate/sync-founder-section.sh?ref={{{newDigest}}}\" | bash -s -- {{{newDigest}}}'"
+        ],
+        "fileFilters": ["CLAUDE.md"],
+        "executionMode": "branch"
+      }
+    }
+  ]
+}
