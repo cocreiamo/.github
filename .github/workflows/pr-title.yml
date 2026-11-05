@@ -1,0 +1,24 @@
+# Reusable: the PR title becomes the squash commit on main, so it must be a Conventional Commit and never a `test:`
+# (with test-first the first commit of a branch is the test; the title must name the change). Callers:
+#   on: {pull_request: {types: [opened, edited, synchronize, reopened]}}
+#   jobs: {title: {uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}
+name: pr-title
+on:
+  workflow_call: {}
+permissions: {}
+jobs:
+  check:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 2
+    steps:
+      - name: the title is a Conventional Commit that names the change
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          re='^(feat|fix|docs|refactor|perf|build|ci|chore|style|revert)(\([a-z0-9._/-]+\))?!?: [^ ].{2,}$'
+          if [[ $TITLE =~ ^test(\(|:|!) ]]; then
+            echo "::error::the PR title is the commit on main: name the change (fix:/feat:/...), not its test: $TITLE"; exit 1
+          fi
+          [[ $TITLE =~ $re ]] || { echo "::error::not a Conventional Commit title (type(scope): subject): $TITLE"; exit 1; }
+          echo "ok: $TITLE"
