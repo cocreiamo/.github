@@ -33,6 +33,20 @@
       "semanticCommitType": "build"
     },
     {
+      "description": "Held: the CI runner image lacks libatomic.so.1, so node 26 does not start there; node 24 is supported until 2028. Lift when the runner image ships libatomic1.",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Held: helm 4 changes flags and behaviour behind kustomize --enable-helm in infrastructure and deploy; move both repositories together after the charts render the same under 4.",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["helm"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "description": "Minor, patch and digest updates merge by themselves once the required checks are green; majors wait for a review.",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest", "lockFileMaintenance"],
       "automerge": true,
