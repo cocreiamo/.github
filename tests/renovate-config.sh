@@ -11,6 +11,10 @@ echo '{"extends": ["config:recommended"], "notAnOption": true}' > "$tmp/renovate
 if (cd "$tmp" && renovate-config-validator --no-global --strict renovate.json) >/dev/null 2>&1; then
   echo "FAIL: the validator accepted an invalid config" >&2; exit 1
 fi
+for dep in node helm; do
+  jq -e --arg d "$dep" '.packageRules[] | select(.matchDepNames == [$d] and .matchUpdateTypes == ["major"] and .enabled == false)' renovate/default.json >/dev/null \
+    || { echo "FAIL: the $dep major is not held back (the runners lack libatomic for node 26; helm 4 needs kustomize and the charts checked)" >&2; exit 1; }
+done
 sha=0123456789abcdef0123456789abcdef01234567
 cmd=$(jq -r '.packageRules[] | select(.postUpgradeTasks) | .postUpgradeTasks.commands[0]' renovate/default.json | sed "s/{{{newDigest}}}/$sha/g")
 allowed=$(cat renovate/allowed-commands.regex)
