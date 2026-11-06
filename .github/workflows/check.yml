@@ -25,6 +25,8 @@ jobs:
       - run: ci-mise-setup
       - run: actionlint -shellcheck="$(mise which shellcheck)"
       - run: zizmor --offline --min-severity low .github/workflows
+      - run: hooks/check-conflict-markers
+      - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
       - run: bash tests/shared-rules.sh
       - run: bash tests/claude-telemetry.sh
