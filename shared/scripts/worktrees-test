@@ -4,7 +4,7 @@
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
