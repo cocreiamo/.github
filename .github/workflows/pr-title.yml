@@ -8,7 +8,7 @@ on:
 permissions: {}
 jobs:
   check:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
       pull-requests: read

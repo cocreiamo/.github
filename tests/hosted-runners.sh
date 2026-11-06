@@ -49,7 +49,7 @@ refuse() { # name, expected message, workflow body, allowlist body
   mkdir -p "$w/$1"
   printf '%s\n' "$3" > "$w/$1/a.yml"
   printf '%s\n' "$4" > "$w/$1/list"
-  check "$w/$1" "$w/$1/list" | grep -q "$2" || { echo "FAIL: case '$1' was not refused ($2)" >&2; exit 1; }
+  got=$(check "$w/$1" "$w/$1/list"); [[ $got == *"$2"* ]] || { echo "FAIL: case '$1' was not refused ($2)" >&2; exit 1; }
 }
 hosted='jobs:
   j:
