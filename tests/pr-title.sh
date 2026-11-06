@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The title check must keep the agreed types and never allow `test`.
+# The title check must keep the agreed Conventional Commit types (`test` included) and refuse any other.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 f=.github/workflows/pr-title.yml
