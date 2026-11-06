@@ -28,6 +28,7 @@ jobs:
       - run: hooks/check-conflict-markers
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
+      - run: bash tests/post-merge-revert.sh
       - run: bash tests/shared-rules.sh
       - run: bash tests/shared-scripts.sh
       - run: bash tests/claude-telemetry.sh
