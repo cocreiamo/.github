@@ -55,10 +55,18 @@ jobs:
           fi
           echo "ok: the section is the canonical one"
       - name: fetch the vendored scripts
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [ -f .github/shared-scripts ] || exit 0
           git sparse-checkout list >/dev/null 2>&1 || exit 0
+          # the checkout leaves no credentials behind and a sparse checkout is a partial clone: the blobs come from the remote
+          if [ -n "${GH_TOKEN:-}" ]; then
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            echo "::add-mask::$auth"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          fi
           awk '$1 !~ /^#/ && NF >= 2 && $2 !~ /(^|\/)\.\.(\/|$)/ && $2 !~ /^\// { print "/" $2 }' .github/shared-scripts \
             | git sparse-checkout add --stdin
       - name: vendored scripts equal the canonical ones
