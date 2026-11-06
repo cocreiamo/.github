@@ -27,6 +27,7 @@ jobs:
       - run: zizmor --offline --min-severity low .github/workflows
       - run: bash tests/pr-title.sh
       - run: bash tests/shared-rules.sh
+      - run: bash tests/shared-scripts.sh
       - run: bash tests/claude-telemetry.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/sync-founder-section.sh
