@@ -6,6 +6,7 @@ zizmor = "1.32.0"
 node = "24.22.2"
 "npm:renovate" = { version = "44.221.4", trust_policy_excludes = ["@yarnpkg/libzip@3.2.2"] }
 jq = "1.8.2"
+uv = "0.13.5"
 
 [hooks]
 postinstall = "git config core.hooksPath hooks"

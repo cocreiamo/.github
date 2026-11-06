@@ -31,5 +31,6 @@ jobs:
       - run: bash tests/shared-rules.sh
       - run: bash tests/shared-scripts.sh
       - run: bash tests/claude-telemetry.sh
+      - run: bash tests/eol-check.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/sync-founder-section.sh
