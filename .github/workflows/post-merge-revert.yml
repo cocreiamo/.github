@@ -8,7 +8,7 @@
 #     uses: cocreiamo/.github/.github/workflows/post-merge-revert.yml@<sha>
 #     with: {failed: "<names of the jobs>", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
-# The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
+# No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
 # revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past, a commit whose
 # revert is already open; the first three still raise the alert. dry-run does everything except write.
 name: post-merge-revert
@@ -61,16 +61,28 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
-            import json, os, subprocess, sys
+            import json, os, sys, urllib.error, urllib.request
 
-            def gh(*args):
-                r = subprocess.run(["gh", *args], capture_output=True, text=True)
-                if r.returncode:
-                    raise RuntimeError("gh %s failed: %s" % (" ".join(args[:2]), r.stderr.strip()[:300]))
-                return r.stdout
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            def call(method, path, body=None):
+                req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        raw = r.read()
+                except urllib.error.HTTPError as e:
+                    raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
+                return json.loads(raw) if raw else None
 
             def api(path):
-                return json.loads(gh("api", path) or "null")
+                return call("GET", path)
+
+            def graphql(query, variables):
+                out = call("POST", "/graphql", {"query": query, "variables": variables})
+                if out.get("errors"):
+                    raise RuntimeError("graphql: %s" % json.dumps(out["errors"])[:300])
+                return out["data"]
 
             def decide(f):
                 if f["head_sha"] != f["sha"]:
@@ -88,15 +100,15 @@ jobs:
                 return {"action": "revert", "reason": "the merge commit is the head of main and its PR is a human one"}
 
             def gather(repo, sha):
-                head = api("repos/%s/git/ref/heads/main" % repo)["object"]["sha"]
-                title = api("repos/%s/commits/%s" % (repo, sha))["commit"]["message"].split("\n")[0]
-                merged = [p for p in api("repos/%s/commits/%s/pulls" % (repo, sha)) if p.get("merged_at") and p.get("merge_commit_sha") == sha]
+                head = api("/repos/%s/git/ref/heads/main" % repo)["object"]["sha"]
+                title = api("/repos/%s/commits/%s" % (repo, sha))["commit"]["message"].split("\n")[0]
+                merged = [p for p in api("/repos/%s/commits/%s/pulls" % (repo, sha)) if p.get("merged_at") and p.get("merge_commit_sha") == sha]
                 pr = None
                 if merged:
                     p = merged[0]
                     pr = {"number": p["number"], "title": p["title"], "head_ref": p["head"]["ref"], "author": p["user"]["login"], "node_id": p["node_id"]}
                 marker = "<!-- post-merge-revert:%s -->" % sha
-                opened = api("repos/%s/pulls?state=open&per_page=100" % repo)
+                opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
                 return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "open_revert": any(marker in (p.get("body") or "") for p in opened)}
 
             def run(env):
@@ -118,9 +130,11 @@ jobs:
                     if d["action"] == "revert":
                         print("dry run, would revert %s as 'revert: %s' with auto-merge, and comment on #%d" % (what, pr["title"], pr["number"]))
                     return 0
-                subprocess.run(["gh", "api", "repos/%s/labels" % repo, "-f", "name=main-red", "-f", "color=b60205"], capture_output=True)
-                issue = json.loads(gh("api", "repos/%s/issues" % repo, "-f", "title=" + issue_title, "-f", "body=" + issue_body,
-                                      "-f", "labels[]=main-red", "-f", "assignees[]=" + env["ASSIGNEE"]))
+                try:
+                    call("POST", "/repos/%s/labels" % repo, {"name": "main-red", "color": "b60205"})
+                except RuntimeError:
+                    pass
+                issue = call("POST", "/repos/%s/issues" % repo, {"title": issue_title, "body": issue_body, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]]})
                 print("alert issue #%d" % issue["number"])
                 if d["action"] != "revert":
                     return 0
@@ -130,16 +144,16 @@ jobs:
                     "", "Closes #%d" % issue["number"], "", "<!-- post-merge-revert:%s -->" % sha,
                 ])
                 try:
-                    out = json.loads(gh("api", "graphql", "-f", "query=mutation($id:ID!,$title:String!,$body:String!){revertPullRequest(input:{pullRequestId:$id,title:$title,body:$body}){revertPullRequest{number url}}}",
-                                        "-f", "id=" + pr["node_id"], "-f", "title=revert: " + pr["title"], "-f", "body=" + body))
-                    new = out["data"]["revertPullRequest"]["revertPullRequest"]
-                    gh("pr", "merge", str(new["number"]), "--auto", "--squash", "-R", repo)
+                    out = graphql("mutation($id:ID!,$title:String!,$body:String!){revertPullRequest(input:{pullRequestId:$id,title:$title,body:$body}){revertPullRequest{id number url}}}",
+                                  {"id": pr["node_id"], "title": "revert: " + pr["title"], "body": body})
+                    new = out["revertPullRequest"]["revertPullRequest"]
+                    graphql("mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}", {"id": new["id"]})
                 except (RuntimeError, KeyError, TypeError) as e:
-                    gh("api", "repos/%s/issues/%d/comments" % (repo, issue["number"]), "-f", "body=The automatic revert could not be made (%s): revert %s by hand." % (e, what))
+                    call("POST", "/repos/%s/issues/%d/comments" % (repo, issue["number"]), {"body": "The automatic revert could not be made (%s): revert %s by hand." % (e, what)})
                     print("revert failed: %s" % e, file=sys.stderr)
                     return 1
-                gh("api", "repos/%s/issues/%d/comments" % (repo, pr["number"]), "-f",
-                   "body=Red on main after this merge (%s: %s). Reverted by %s; alert #%d." % (env["FAILED"], env["RUN_URL"], new["url"], issue["number"]))
+                call("POST", "/repos/%s/issues/%d/comments" % (repo, pr["number"]),
+                     {"body": "Red on main after this merge (%s: %s). Reverted by %s; alert #%d." % (env["FAILED"], env["RUN_URL"], new["url"], issue["number"])})
                 print("revert PR #%d, auto-merge on" % new["number"])
                 return 0
 
