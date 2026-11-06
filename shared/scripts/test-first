@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#MISE description="Test before fix: every fix: commit of the branch (BASE..HEAD, default origin/main) has an earlier test: commit in the same range; with --red-cmd CMD, CMD must also fail on the commit before each fix: (the red proof). Merge commits are ignored"
+set -euo pipefail
+base=origin/main red_cmd=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --red-cmd) red_cmd=${2:?--red-cmd needs a command}; shift 2 ;;
+    *) base=$1; shift ;;
+  esac
+done
+head=${TEST_FIRST_HEAD:-HEAD}
+fix_re='^fix(\([a-z0-9-]+\))?!?: '
+test_re='^test(\([a-z0-9-]+\))?!?: '
+seen_test=false
+status=0
+work=""
+# shellcheck disable=SC2329 # runs through the EXIT trap
+cleanup() { [ -z "$work" ] || { git worktree remove --force "$work" 2>/dev/null || true; rm -rf "$work"; }; }
+trap cleanup EXIT
+while read -r sha subject; do
+  if [[ $subject =~ $test_re ]]; then
+    seen_test=true
+  elif [[ $subject =~ $fix_re ]]; then
+    if ! $seen_test; then
+      echo "fix without an earlier test: commit in this branch: ${sha:0:9} $subject" >&2
+      status=1
+      continue
+    fi
+    if [ -n "$red_cmd" ]; then
+      work=$(mktemp -d)
+      git worktree add --detach --quiet "$work" "$sha^"
+      if (cd "$work" && bash -c "$red_cmd") >/dev/null 2>&1; then
+        echo "the test passes before the fix, so it does not prove it: ${sha:0:9} $subject" >&2
+        status=1
+      fi
+      git worktree remove --force "$work"; rm -rf "$work"; work=""
+    fi
+  fi
+done < <(git log --no-merges --reverse --format='%H %s' "$base..$head")
+[ "$status" -eq 0 ] && echo "test-first: ok"
+exit "$status"

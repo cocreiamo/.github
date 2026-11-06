@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Every worktree with its branch, PR and CI state."
+set -euo pipefail
+
+git worktree list --porcelain | awk '
+  /^worktree / { p = substr($0, 10); n++ }
+  /^branch refs\/heads\// { if (n > 1) print substr($0, 19) "\t" p }
+' | while IFS=$'\t' read -r branch path; do
+  pr="$(gh pr list --head "$branch" --state all --limit 1 --json number,state,statusCheckRollup --jq '
+    if length == 0 then "no PR" else .[0] |
+      "#\(.number) \(.state) CI " + (
+        if (.statusCheckRollup | length) == 0 then "none"
+        elif any(.statusCheckRollup[]; .conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT") then "failing"
+        elif any(.statusCheckRollup[]; .status != "COMPLETED") then "running"
+        else "passing" end) end')"
+  printf '%-40s %-28s %s\n' "$branch" "$pr" "$path"
+done

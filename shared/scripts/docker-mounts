@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="No docker run/create with a bind mount of a local path in the scripts and workflows the CI runs: a CI job runs in a container whose temp folders the Docker daemon does not see, so the mount is empty; pass files in over stdin (tar) or docker cp. Only the work folder ($PWD, $GITHUB_WORKSPACE, $RUNNER_TEMP) shares its path with the host"
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+# A docker run/create statement (the lines up to the next blank one) that mounts a path: -v /x, -v "$d:/t", "-v", f"{tmp}:/t",
+# --volume, --mount. A named volume (-v cache:/c), a work-folder source and flags of other tools (grep -v pattern) pass; a
+# `ci-mount-ok: <why>` comment on the line above or inside the statement vouches for a mount that exists on the host.
+scan() {
+  awk '
+    function path(l) { return l ~ /(^|[ "(,])-v["'\'']?[ ,]+f?["'\'']?[\/.$~{]/ || l ~ /(^|[ "(,])--(volume|mount)[ =",]/ }
+    function work(l) { return l ~ /(^|[ "(,])-v["'\'']?[ ,]+["'\'']?(\$\{?(PWD|GITHUB_WORKSPACE|RUNNER_TEMP|RUNNER_WORKSPACE)\}?|\$\(pwd\)|\$\{\{ *(github\.workspace|runner\.temp) *\}\})/ }
+    function flag(l) { return path(l) && !work(l) && !ok }
+    FNR == 1 { active = 0; prev = "" }
+    /docker["'\'', ]+(run|create)([ "'\'',]|$)/ { active = 1; n = 0; ok = prev ~ /ci-mount-ok:/ }
+    active && /ci-mount-ok:/ { ok = 1 }
+    active && NF == 0 { active = 0 }
+    active && flag($0) { print FILENAME ":" FNR ": " $0 }
+    active && ++n > 20 { active = 0 }
+    { prev = $0 }
+  ' "$@"
+}
+
+mapfile -t files < <(git ls-files mise-tasks lib tests .github/workflows ':!tests/ci-docker/bad' ':!mise-tasks/test/docker-mounts' | xargs grep -lI docker 2>/dev/null || true)
+if [ "${#files[@]}" -gt 0 ] && hits=$(scan "${files[@]}") && [ -n "$hits" ]; then
+  echo "docker run/create bind-mounts a local path in a script the CI runs:" >&2
+  echo "$hits" >&2
+  echo "A CI job runs in a container on the runner: only the work folder exists on the Docker host, so any other path (mktemp, /tmp) mounts empty. Pass files in as a tar over stdin (docker run -i ... tar x) or docker create + docker cp." >&2
+  exit 1
+fi
+
+for f in tests/ci-docker/bad/*; do
+  [ -n "$(scan "$f")" ] || { echo "docker-mounts accepted $f" >&2; exit 1; }
+done
+good=$(scan tests/ci-docker/good/*)
+[ -z "$good" ] || { echo "docker-mounts refused tests/ci-docker/good:" >&2; echo "$good" >&2; exit 1; }
+echo "docker-mounts: no CI script bind-mounts a local path"

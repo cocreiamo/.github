@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. Run after every merge and at session start."
+# --dry-run (-n) changes nothing: it prints "would remove|archive|delete" for what a real run does.
+# Stale = last commit, branch update and last file change in the worktree all older than WT_GC_STALE_HOURS (default 24).
+# Archive: $WT_GC_ARCHIVE_DIR (default ~/workspaces/archive)/<repo>/<date>/<branch>.{uncommitted.patch,untracked.tgz,bundle}; nothing is removed unless every archive step succeeded.
+# Remote branches: deleted only when the PR is closed unmerged, the tip is the one the PR closed with and it is stale; GitHub keeps the PR and its "Restore branch". Without any PR or younger: report-only.
+set -euo pipefail
+
+dry=false
+case "${1:-}" in
+  --dry-run | -n) dry=true ;;
+  "") ;;
+  *) echo "refused: usage is wt:gc [--dry-run]" >&2; exit 2 ;;
+esac
+
+# The worktree being removed may be the current directory, which git cannot work from afterwards.
+cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+stale_hours="${WT_GC_STALE_HOURS:-24}"
+case "$stale_hours" in "" | *[!0-9]*) echo "refused: WT_GC_STALE_HOURS must be a whole number of hours" >&2; exit 2 ;; esac
+archive_root="${WT_GC_ARCHIVE_DIR:-$HOME/workspaces/archive}"
+now="$(date +%s)"
+repo_name="$(basename "$PWD")"
+git fetch -q --prune origin || echo "warning: git fetch failed, remote branches may be stale"
+
+# Rows "head number STATE oid" of the PRs; the awk filters in the callers keep the fake gh of the tests trivial.
+prs() { gh pr list "$@" --json headRefName,number,state,headRefOid --jq '.[] | "\(.headRefName) \(.number) \(.state) \(.headRefOid)"'; }
+
+# The invoking shell and its parents may sit in the worktree being removed (the monorepo task is run from there on
+# purpose): they are not users of it. Anything else with its working directory or a file open there is.
+proc_root="${WT_GC_PROC:-/proc}"
+ancestors=" "
+for ((pid = $$; pid > 1; pid = $(ps -o ppid= -p "$pid" | tr -d ' '))); do ancestors+="$pid "; done
+
+# One scan of /proc per run: rows "pid<TAB>path" for every working directory and open file.
+scan_holders() {
+  local p pid
+  [ -d "$proc_root/self" ] || return 0
+  for p in "$proc_root"/[0-9]*; do
+    pid="${p#"$proc_root"/}"
+    [[ "$ancestors" == *" $pid "* ]] && continue
+    readlink "$p/cwd" "$p"/fd/* 2>/dev/null | awk -v pid="$pid" '{ print pid "\t" $0 }'
+  done > "$holders_file" 2>/dev/null || true
+}
+holders_file="$(mktemp -u)"
+trap 'rm -f "$holders_file"' EXIT
+
+holders() {
+  local dir="$1"
+  if [ -d "$proc_root/self" ]; then
+    [ -e "$holders_file" ] || scan_holders
+    local pid cmd
+    while IFS= read -r pid; do
+      # A process can exit between the scan and this read; the redirection error is the shell's, so the group takes the 2>.
+      cmd="$({ tr '\0' ' ' < "$proc_root/$pid/cmdline" | cut -c1-60; } 2>/dev/null || true)"
+      echo "pid $pid ($cmd)"
+    done < <(awk -F'\t' -v d="$dir" '$2 == d || index($2, d "/") == 1 { print $1 }' "$holders_file" | sort -u)
+  elif command -v lsof > /dev/null; then
+    lsof -Fp +D "$dir" 2>/dev/null | sed -n 's/^p/pid /p' | sort -u
+  else
+    echo "unknown (neither /proc nor lsof)"
+  fi
+}
+
+# Seconds since the newest sign of life of a local branch: its tip, its last ref update and, with a worktree, any
+# tracked or untracked-not-ignored file in it.
+idle_seconds() {
+  local branch="$1" path="$2" t u m
+  t="$(git log -1 --format=%ct "refs/heads/$branch" 2>/dev/null || true)"
+  [ -n "$t" ] || { echo 0; return; }
+  u="$(git log -g -1 --format=%ct "refs/heads/$branch" 2>/dev/null || true)"
+  [ -z "$u" ] || [ "$u" -le "$t" ] || t="$u"
+  if [ -n "$path" ]; then
+    m="$(git -C "$path" ls-files -co --exclude-standard -z | (cd "$path" && xargs -0 -r stat -c %Y 2>/dev/null) | sort -n | tail -1 || true)"
+    [ -z "$m" ] || [ "$m" -le "$t" ] || t="$m"
+  fi
+  echo $((now - t))
+}
+
+archive_dir() { echo "$archive_root/$repo_name/$(date +%F)"; }
+
+# Writes what is not on origin/main under archive_dir and verifies each file; prints the file names.
+archive() {
+  local branch="$1" path="$2" dir base made=()
+  dir="$(archive_dir)"
+  base="$dir/${branch//\//-}"
+  mkdir -p "$dir" || return 1
+  if [ -n "$path" ]; then
+    git -C "$path" diff HEAD --binary > "$base.uncommitted.patch" || return 1
+    if [ -s "$base.uncommitted.patch" ]; then made+=("$base.uncommitted.patch"); else rm -f "$base.uncommitted.patch"; fi
+    if [ -n "$(git -C "$path" ls-files -o --exclude-standard)" ]; then
+      git -C "$path" ls-files -o --exclude-standard -z | tar -C "$path" --null -T - -czf "$base.untracked.tgz" || return 1
+      tar -tzf "$base.untracked.tgz" > /dev/null || return 1
+      made+=("$base.untracked.tgz")
+    fi
+  fi
+  if [ -n "$(git rev-list -1 "origin/main..refs/heads/$branch")" ]; then
+    git bundle create -q "$base.bundle" "refs/heads/$branch" ^origin/main || return 1
+    git bundle verify -q "$base.bundle" > /dev/null 2>&1 || return 1
+    made+=("$base.bundle")
+  fi
+  rmdir "$dir" 2> /dev/null || true
+  printf '%s\n' "${made[@]}"
+}
+
+report=()
+main_dir="$PWD"
+declare -A wt_of
+paths=() branches=()
+path="" branch=""
+while IFS= read -r line; do
+  case "$line" in
+    "worktree "*) path="${line#worktree }" branch="" ;;
+    "branch refs/heads/"*) branch="${line#branch refs/heads/}" ;;
+    "")
+      if [ -n "$path" ]; then paths+=("$path"); branches+=("$branch"); fi
+      path="" branch=""
+      ;;
+  esac
+done < <(git worktree list --porcelain; echo)
+
+handle() {
+  local branch="$1" path="$2" rows tip n merged_oid who idle files why
+  rows="$(prs --head "$branch" --state all)"
+  if awk '$3 == "OPEN" { f = 1 } END { exit !f }' <<<"$rows"; then
+    echo "skip   $branch: PR open"
+    return
+  fi
+  if ! awk '$3 == "MERGED" { f = 1 } END { exit !f }' <<<"$rows"; then
+    n="$(awk '$3 == "CLOSED" { print "#" $2; exit }' <<<"$rows")"
+    why="no PR"
+    [ -z "$n" ] || why="PR $n closed, not merged"
+    idle="$(idle_seconds "$branch" "$path")"
+    if [ "$idle" -lt $((stale_hours * 3600)) ]; then
+      echo "skip   $branch: $why, last activity $((idle / 3600))h ago, younger than ${stale_hours}h"
+      if [ -n "$path" ]; then report+=("worktree $branch ($path): $why, younger than ${stale_hours}h"); else report+=("branch $branch: $why, younger than ${stale_hours}h"); fi
+      return
+    fi
+    if [ -n "$path" ]; then
+      who="$(holders "$(realpath "$path" 2>/dev/null || echo "$path")")"
+      if [ -n "$who" ]; then
+        echo "skip   $branch: $why, in use by $(tr '\n' ' ' <<<"$who")"
+        return
+      fi
+    fi
+    if [ "$dry" = true ]; then
+      echo "would archive $branch${path:+ ($path)} to $(archive_dir) and remove it ($why)"
+      return
+    fi
+    if ! files="$(archive "$branch" "$path")"; then
+      echo "skip   $branch: archive failed, nothing removed"
+      return
+    fi
+    if [ -n "$path" ] && ! git worktree remove --force "$path" 2>/dev/null; then
+      echo "skip   $branch: archived but git could not remove $path (locked?)"
+      return
+    fi
+    git branch -q -D "$branch"
+    echo "archived $branch ($why) to ${files:-nothing to archive}" | tr '\n' ' '
+    echo
+    echo "removed $branch${path:+ ($path)}"
+    return
+  fi
+  tip="$(git rev-parse "refs/heads/$branch")"
+  merged_oid="$(awk '$3 == "MERGED" { print $4 }' <<<"$rows")"
+  if ! grep -qx "$tip" <<<"$merged_oid"; then
+    echo "skip   $branch: commits after the merged PR (local tip ${tip:0:9})"
+    if [ -n "$path" ]; then report+=("worktree $branch ($path): commits after the merged PR"); else report+=("branch $branch: commits after the merged PR"); fi
+    return
+  fi
+  if [ -n "$path" ]; then
+    if [ -n "$(git -C "$path" status --porcelain)" ]; then
+      echo "skip   $branch: uncommitted changes in $path"
+      return
+    fi
+    who="$(holders "$(realpath "$path" 2>/dev/null || echo "$path")")"
+    if [ -n "$who" ]; then
+      echo "skip   $branch: in use by $(tr '\n' ' ' <<<"$who")"
+      return
+    fi
+    if [ "$dry" = true ]; then
+      echo "would remove $branch${path:+ ($path)}"
+      return
+    fi
+    if ! git worktree remove "$path" 2>/dev/null; then
+      echo "skip   $branch: git could not remove $path (locked?)"
+      return
+    fi
+  elif [ "$dry" = true ]; then
+    echo "would remove $branch"
+    return
+  fi
+  git branch -q -D "$branch"
+  echo "removed $branch${path:+ ($path)}"
+}
+
+for i in "${!paths[@]}"; do
+  path="${paths[$i]}" branch="${branches[$i]}"
+  [ -z "$branch" ] || wt_of["$branch"]=1
+  if [ "$path" = "$main_dir" ]; then
+    [ -z "$branch" ] || [ "$branch" = main ] || echo "skip   $branch: checked out in the main checkout"
+  elif [ -z "$branch" ]; then
+    echo "skip   $path: detached HEAD"
+    report+=("worktree $path: detached HEAD")
+  elif [ "$branch" != main ]; then
+    handle "$branch" "$path"
+  fi
+done
+
+while IFS= read -r branch; do
+  [ "$branch" != main ] && [ -z "${wt_of[$branch]:-}" ] && handle "$branch" ""
+done < <(git for-each-ref --format='%(refname:short)' refs/heads)
+
+all="$(prs --state all --limit 1000)"
+slug=""
+while IFS= read -r branch; do
+  case "$branch" in HEAD | main) continue ;; esac
+  tip="$(git rev-parse -q --verify "refs/remotes/origin/$branch" || true)"
+  [ -n "$tip" ] || continue
+  idle=$((now - $(git log -1 --format=%ct "$tip")))
+  state="$(awk -v b="$branch" '$1 == b { s[$3] = $2 } END { if (s["OPEN"]) print "open"; else if (s["MERGED"]) print "merged"; else if (s["CLOSED"]) print "closed " s["CLOSED"] }' <<<"$all")"
+  case "$state" in
+    "" ) report+=("remote $branch: no PR, last commit $((idle / 3600))h ago") ;;
+    open | merged) ;;
+    closed*)
+      n="${state#closed }"
+      if ! awk -v b="$branch" -v t="$tip" '$1 == b && $3 == "CLOSED" && $4 == t { f = 1 } END { exit !f }' <<<"$all"; then
+        report+=("remote $branch: PR #$n closed, not merged, commits after the close")
+      elif [ "$idle" -lt $((stale_hours * 3600)) ]; then
+        report+=("remote $branch: PR #$n closed, not merged, younger than ${stale_hours}h")
+      elif [ "$dry" = true ]; then
+        echo "would delete remote $branch (PR #$n closed, not merged; GitHub keeps the PR and Restore branch)"
+      else
+        [ -n "$slug" ] || slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+        if gh api -X DELETE "repos/$slug/git/refs/heads/$branch" > /dev/null; then
+          echo "deleted remote $branch (PR #$n closed, not merged; GitHub keeps the PR and Restore branch)"
+        else
+          report+=("remote $branch: PR #$n closed, not merged, delete failed")
+        fi
+      fi
+      ;;
+  esac
+done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin)
+
+[ "$dry" = true ] || git worktree prune
+if [ "${#report[@]}" -gt 0 ]; then
+  echo
+  echo "report-only (kept: younger than ${stale_hours}h, no PR on a remote branch, or changed after the PR closed):"
+  printf 'report %s\n' "${report[@]}"
+fi

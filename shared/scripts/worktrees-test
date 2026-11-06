@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+#MISE description="wt:gc and wt:list against a throwaway repository and a fake gh: a merged, clean, unused worktree is removed; one a process uses (working directory or open file), a dirty one, one with commits after the merge, an open one are kept and said why; a closed-unmerged or no-PR one is archived then removed once it is older than the threshold, kept and reported while younger, kept when the archive fails"
+# shellcheck disable=SC2016 # the bash -c bodies are single-quoted on purpose: they expand in the child
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+export WT_ROOT="$tmp/wt" FAKE_GH_DIR="$tmp/gh" FAKE_ORIGIN="$tmp/origin.git"
+mkdir -p "$WT_ROOT" "$FAKE_GH_DIR" "$tmp/bin"
+cat > "$tmp/bin/gh" <<'GH'
+#!/usr/bin/env bash
+# gh pr list: the rows "head number STATE oid" of $FAKE_GH_DIR/prs, filtered by --head and --state; --json and --jq are ignored.
+case "$1 ${2:-}" in
+  "repo view") echo "example/repo"; exit 0 ;;
+  "api -X") echo "$*" >> "$FAKE_GH_DIR/api"; git --git-dir="$FAKE_ORIGIN" update-ref -d "refs/heads/${4#*/git/refs/heads/}"; exit 0 ;;
+esac
+head="" state=all
+while [ "$#" -gt 0 ]; do
+  case "$1" in --head) head="$2"; shift ;; --state) state="$2"; shift ;; esac
+  shift
+done
+awk -v h="$head" -v s="$state" 'h != "" && $1 != h { next } s != "all" && tolower($3) != tolower(s) { next } { print }' "$FAKE_GH_DIR/prs"
+GH
+chmod +x "$tmp/bin/gh"
+: > "$FAKE_GH_DIR/prs"
+export PATH="$tmp/bin:$PATH"
+
+git init -q --bare -b main "$tmp/origin.git"
+git clone -q "$tmp/origin.git" "$tmp/main" 2>/dev/null
+cd "$tmp/main"
+GIT_AUTHOR_DATE="@1700000000 +0000" GIT_COMMITTER_DATE="@1700000000 +0000" git commit -q --allow-empty -m "chore: root"
+git commit -q --allow-empty -m "chore: second"
+git push -q origin main
+
+wt_new() { git worktree add -q "$WT_ROOT/${1#*/}" -b "$1" origin/main; }
+fails=0
+check() {
+  local name="$1"
+  shift
+  if "$@" >"$tmp/out" 2>&1; then echo "ok   $name"; else echo "FAIL $name"; sed 's/^/     /' "$tmp/out"; fails=$((fails + 1)); fi
+}
+
+pr() { printf '%s %s %s %s\n' "$1" "$((++prn))" "$2" "${3:-$(git rev-parse "$1")}" >> "$FAKE_GH_DIR/prs"; }
+prn=0
+for t in alpha merged dirty open closed held heldfile ahead; do wt_new "chore/$t"; done
+touch "$WT_ROOT/heldfile/data"
+git -C "$WT_ROOT/heldfile" add data
+git -C "$WT_ROOT/heldfile" commit -q -m "chore: data"
+git branch chore/orphan-merged
+git branch chore/orphan-closed
+pr chore/merged MERGED
+pr chore/dirty MERGED
+pr chore/open OPEN
+pr chore/closed CLOSED
+pr chore/held MERGED
+pr chore/heldfile MERGED
+pr chore/ahead MERGED
+pr chore/orphan-merged MERGED
+pr chore/orphan-closed CLOSED
+git -C "$WT_ROOT/ahead" commit -q --allow-empty -m "chore: after the merge"
+touch "$WT_ROOT/dirty/unsaved"
+git push -q origin chore/closed:refs/heads/chore/closed chore/orphan-closed:refs/heads/chore/stale-remote
+pr chore/stale-remote CLOSED "$(git rev-parse chore/orphan-closed)"
+
+old="@$(($(date +%s) - 259200)) +0000"
+export WT_GC_ARCHIVE_DIR="$tmp/archive"
+aged() { GIT_AUTHOR_DATE="$old" GIT_COMMITTER_DATE="$old" "$@"; }
+stale_wt() {
+  aged git worktree add -q "$WT_ROOT/$1" -b "chore/$1" "${3:-origin/main}"
+  if [ "${2:-work}" = work ]; then
+    echo first > "$WT_ROOT/$1/work.txt"
+    git -C "$WT_ROOT/$1" add work.txt
+    aged git -C "$WT_ROOT/$1" commit -q -m "chore: $1 work"
+    echo more >> "$WT_ROOT/$1/work.txt"
+    echo loose > "$WT_ROOT/$1/loose.txt"
+  fi
+  find "$WT_ROOT/$1" -name .git -prune -o -type f -exec touch -d '3 days ago' {} +
+}
+for t in stale stale-nopr stale-clean stale-open stale-held stale-touched; do
+  if [ "$t" = stale-clean ]; then stale_wt "$t" none origin/main~1; else stale_wt "$t"; fi
+done
+touch "$WT_ROOT/stale-touched/just-now"
+tree="$(git rev-parse "origin/main^{tree}")"
+aged git branch chore/stale-branch "$(aged git commit-tree -p origin/main -m "chore: old branch" "$tree")"
+old_remote="$(aged git commit-tree -p origin/main -m "chore: old remote" "$tree")"
+git push -q origin "$old_remote:refs/heads/chore/stale-remote-old" "$old_remote:refs/heads/chore/stale-remote-nopr" "$old_remote:refs/heads/chore/stale-remote-open"
+pr chore/stale CLOSED
+pr chore/stale-clean CLOSED
+pr chore/stale-open OPEN
+pr chore/stale-held CLOSED
+pr chore/stale-touched CLOSED
+pr chore/stale-branch CLOSED
+pr chore/stale-remote-old CLOSED "$old_remote"
+pr chore/stale-remote-open OPEN "$old_remote"
+git fetch -q origin
+(cd "$WT_ROOT/held" && exec sleep 300) &
+holder_cwd=$!
+(exec 3< "$WT_ROOT/heldfile/data"; cd / && exec sleep 300) &
+holder_file=$!
+(cd "$WT_ROOT/stale-held" && exec sleep 300) &
+holder_old=$!
+sleep 0.5
+
+gc="$repo/mise-tasks/wt/gc"
+"$gc" --dry-run > "$tmp/dry" 2>&1 || true
+check "wt:gc --dry-run removes nothing" bash -c '[ -d "$WT_ROOT/merged" ] && git rev-parse -q --verify chore/merged && git rev-parse -q --verify chore/orphan-merged'
+check "wt:gc --dry-run says what it would remove" bash -c 'grep -q "would remove chore/merged" "$1" && grep -q "would remove chore/orphan-merged" "$1"' _ "$tmp/dry"
+check "wt:gc --dry-run still skips and reports" bash -c 'grep -q "skip.*chore/held.*in use" "$1" && grep -q "report.*remote chore/stale-remote" "$1"' _ "$tmp/dry"
+day="$(date +%F)"
+arch="$tmp/archive/main/$day"
+check "wt:gc --dry-run says what it would archive and creates no archive" bash -c 'grep -q "would archive.*chore/stale " "$1" && grep -q "would archive.*chore/stale-branch" "$1" && grep -q "would delete remote chore/stale-remote-old" "$1" && [ ! -e "$2" ]' _ "$tmp/dry" "$tmp/archive"
+touch "$tmp/blocked"
+WT_GC_ARCHIVE_DIR="$tmp/blocked/x" "$gc" > "$tmp/gcfail" 2>&1 || true
+check "wt:gc removes nothing when the archive fails" bash -c 'grep -q "skip   chore/stale: .*archive failed" "$1" && for t in stale stale-nopr stale-clean; do [ -d "$WT_ROOT/$t" ] && git rev-parse -q --verify "chore/$t" > /dev/null || exit 1; done && git rev-parse -q --verify chore/stale-branch' _ "$tmp/gcfail"
+"$gc" > "$tmp/gc" 2>&1 || true
+check "wt:list shows every worktree" bash -c '"$0" | grep -q "chore/open"' "$repo/mise-tasks/wt/list"
+check "wt:gc removes a clean worktree whose PR is merged, and its branch" bash -c '[ ! -d "$WT_ROOT/merged" ] && ! git rev-parse -q --verify chore/merged'
+check "wt:gc removes the local branch of a merged PR that has no worktree" bash -c '! git rev-parse -q --verify chore/orphan-merged'
+check "wt:gc keeps a dirty worktree and says why" bash -c '[ -d "$WT_ROOT/dirty" ] && grep -q "skip.*chore/dirty.*uncommitted" "$1"' _ "$tmp/gc"
+check "wt:gc keeps a worktree a process has as its working directory, naming the pid" bash -c '[ -d "$WT_ROOT/held" ] && grep -q "skip.*chore/held.*in use.*$1" "$2"' _ "$holder_cwd" "$tmp/gc"
+check "wt:gc keeps a worktree a process has a file open in" bash -c '[ -d "$WT_ROOT/heldfile" ] && grep -q "skip.*chore/heldfile.*in use.*$1" "$2"' _ "$holder_file" "$tmp/gc"
+check "wt:gc keeps a merged branch that has commits after the merge" bash -c '[ -d "$WT_ROOT/ahead" ] && grep -q "^report worktree chore/ahead (.*): commits after the merged PR$" "$1"' _ "$tmp/gc"
+check "wt:gc keeps a worktree whose PR is open" test -d "$WT_ROOT/open"
+check "wt:gc keeps a worktree whose PR is closed unmerged and reports it" bash -c '[ -d "$WT_ROOT/closed" ] && grep -q "report.*worktree chore/closed.*: PR #[0-9]* closed, not merged" "$1"' _ "$tmp/gc"
+check "wt:gc keeps a worktree with no PR and reports it" bash -c '[ -d "$WT_ROOT/alpha" ] && grep -q "report.*worktree chore/alpha.*no PR" "$1"' _ "$tmp/gc"
+check "wt:gc reports a local branch with a closed PR" bash -c 'git rev-parse -q --verify chore/orphan-closed && grep -q "report.*branch chore/orphan-closed" "$1"' _ "$tmp/gc"
+check "wt:gc reports a remote branch whose PR is closed unmerged" bash -c 'grep -q "report.*remote chore/stale-remote" "$1"' _ "$tmp/gc"
+check "wt:gc never reports main" bash -c '! grep -q "report.*main" "$1"' _ "$tmp/gc"
+
+check "wt:gc archives a stale closed-PR worktree: patch, untracked files and bundle, then removes it and its branch" bash -c '[ ! -d "$WT_ROOT/stale" ] && ! git rev-parse -q --verify chore/stale && grep -q "^+more" "$1/chore-stale.uncommitted.patch" && tar -tzf "$1/chore-stale.untracked.tgz" | grep -q loose.txt && git bundle verify "$1/chore-stale.bundle" && git ls-remote "$1/chore-stale.bundle" | grep -q refs/heads/chore/stale' _ "$arch"
+check "wt:gc archives and removes a stale worktree that has no PR" bash -c '[ ! -d "$WT_ROOT/stale-nopr" ] && ! git rev-parse -q --verify chore/stale-nopr && [ -s "$1/chore-stale-nopr.bundle" ]' _ "$arch"
+check "wt:gc removes a stale worktree with nothing to archive, writing no file" bash -c '[ ! -d "$WT_ROOT/stale-clean" ] && ! git rev-parse -q --verify chore/stale-clean && ! ls "$1"/chore-stale-clean.* 2>/dev/null' _ "$arch"
+check "wt:gc archives and removes a stale local branch without a worktree" bash -c '! git rev-parse -q --verify chore/stale-branch && [ -s "$1/chore-stale-branch.bundle" ] && [ ! -e "$1/chore-stale-branch.uncommitted.patch" ]' _ "$arch"
+check "wt:gc prints where each archive went" bash -c 'grep -q "archived chore/stale.*$1/chore-stale.bundle" "$2"' _ "$arch" "$tmp/gc"
+check "wt:gc keeps a stale worktree whose PR is open" bash -c '[ -d "$WT_ROOT/stale-open" ] && git rev-parse -q --verify chore/stale-open'
+check "wt:gc keeps an old branch whose worktree files were modified recently, saying its age" bash -c '[ -d "$WT_ROOT/stale-touched" ] && grep -q "skip.*chore/stale-touched.*younger than 24h" "$1"' _ "$tmp/gc"
+check "wt:gc keeps a stale worktree a process uses" bash -c '[ -d "$WT_ROOT/stale-held" ] && grep -q "skip.*chore/stale-held.*in use" "$1"' _ "$tmp/gc"
+check "wt:gc keeps a young closed-PR worktree, saying its age" bash -c '[ -d "$WT_ROOT/closed" ] && grep -q "skip.*chore/closed.*younger than 24h" "$1"' _ "$tmp/gc"
+check "wt:gc deletes the remote branch of a stale closed PR through the API" bash -c 'grep -q "api -X DELETE repos/example/repo/git/refs/heads/chore/stale-remote-old$" "$1"' _ "$FAKE_GH_DIR/api"
+check "wt:gc deletes no other remote branch: young closed, open PR, no PR, main" bash -c '{ [ "$(wc -l < "$1")" = 1 ] || { cat "$1"; false; }; } && grep -q "report.*remote chore/stale-remote-nopr.*no PR" "$2" && grep -q "report.*remote chore/stale-remote: .*younger than 24h" "$2"' _ "$FAKE_GH_DIR/api" "$tmp/gc"
+
+kill "$holder_cwd" "$holder_file" "$holder_old"
+wait "$holder_cwd" "$holder_file" "$holder_old" 2>/dev/null || true
+"$gc" > "$tmp/gc" 2>&1 || true
+check "wt:gc removes the worktrees once nothing holds them" bash -c '[ ! -d "$WT_ROOT/held" ] && [ ! -d "$WT_ROOT/heldfile" ] && [ ! -d "$WT_ROOT/stale-held" ] && [ -s "$1/chore-stale-held.bundle" ]' _ "$arch"
+
+git worktree add -q --detach "$WT_ROOT/detached" origin/main
+git branch chore/no-worktree-merged
+pr chore/no-worktree-merged MERGED
+mkdir -p "$tmp/proc/self" "$tmp/proc/4242999"
+ln -s "$WT_ROOT/vanished" "$tmp/proc/4242999/cwd"
+check "wt:gc survives a detached worktree, reports it and keeps it" bash -c '"$0" > "$1" 2>&1 && grep -q "skip   .*detached HEAD" "$1" && [ -d "$WT_ROOT/detached" ] && ! git rev-parse -q --verify chore/no-worktree-merged' "$gc" "$tmp/gc2"
+wt_new chore/vanished
+pr chore/vanished MERGED
+check "wt:gc keeps a worktree held by a process whose /proc entry has no cmdline, without a shell error" bash -c 'WT_GC_PROC="$1/proc" "$0" > "$2" 2>&1; [ -d "$WT_ROOT/vanished" ] && grep -q "skip.*chore/vanished.*in use" "$2" && ! grep -q "No such file" "$2"' "$gc" "$tmp" "$tmp/gc3"
+git worktree remove --force "$WT_ROOT/detached"
+
+wt_new chore/inside
+pr chore/inside MERGED
+check "wt:gc run from inside the worktree it removes still deletes the branch" bash -c 'cd "$WT_ROOT/inside" && "$0" && ! git -C "$1" rev-parse -q --verify chore/inside' "$gc" "$tmp/main"
+
+[ "$fails" = 0 ] || { echo "$fails failed" >&2; exit 1; }
+echo "wt:gc and wt:list behave"
