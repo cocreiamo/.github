@@ -169,7 +169,8 @@ mkdir -p "$bz/install/0123" "$bz/cache/repos/x"
 echo keep > "$bz/install/0123/bin"
 echo keep > "$bz/cache/repos/x/blob"
 fake_base() {
-  local d="$bz/$(printf %s "$1" | md5sum | cut -c1-32)"
+  local d
+  d="$bz/$(printf %s "$1" | md5sum | cut -c1-32)"
   mkdir -p "$d/execroot/ws" "$d/server"
   printf %s "$1" > "$d/DO_NOT_BUILD_HERE"
   head -c 20000 /dev/zero > "$d/execroot/ws/out.bin"
@@ -177,9 +178,9 @@ fake_base() {
   echo "$d"
 }
 fake_server() {
-  (cd "${3:-/}" && exec -a "bazel(fake) --output_base=$1/javalog" sleep 300) &
-  echo $! > "$1/server/server.pid.txt"
-  eval "$2=$!"
+  (cd "$2" && exec -a "bazel(fake) --output_base=$1/javalog" sleep 300) &
+  fake_pid=$!
+  echo "$fake_pid" > "$1/server/server.pid.txt"
 }
 cat > "$tmp/bin/bazel" <<'BAZEL'
 #!/usr/bin/env bash
@@ -199,8 +200,10 @@ bz_orphan="$(fake_base "$tmp/workspace-that-is-gone")"
 bz_live="$(fake_base "$tmp/main")"
 bz_running="$(fake_base "$tmp/workspace-gone-but-served")"
 mkdir -p "$bz/00000000000000000000000000000000"
-fake_server "$bz_merged" srv_merged "$WT_ROOT/bz-merged"
-fake_server "$bz_running" srv_running /
+fake_server "$bz_merged" "$WT_ROOT/bz-merged"
+srv_merged=$fake_pid
+fake_server "$bz_running" /
+srv_running=$fake_pid
 sleep 0.5
 "$gc" --dry-run > "$tmp/bzdry" 2>&1 || true
 check "wt:gc --dry-run removes no Bazel output base and stops no server" bash -c 'for d in "$@"; do [ -d "$d" ] || exit 1; done; kill -0 "$0" && [ ! -e "$FAKE_GH_DIR/bazel-calls" ] && [ -d "$WT_ROOT/bz-merged" ]' "$srv_merged" "$bz_merged" "$bz_orphan" "$bz_running" "$bz_kept" "$bz_live"
