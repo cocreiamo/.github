@@ -1,0 +1,8 @@
+# Jobs that run on the light self-hosted pool [self-hosted, cocreiamo-ci-light] (two small slots on ht-bare) instead of
+# [self-hosted, cocreiamo-ci]: 'workflow-file job reason'. Only a job that takes seconds, needs nothing beyond a
+# read-only GITHUB_TOKEN, builds nothing, uses no cache and reaches no cluster or host. tests/light-jobs.sh refuses any
+# other job on the label, and any listed job with a secret, an environment, a write permission or a long timeout.
+# The reason: GitHub has no job priority, so a seconds-long required check waited behind 15-minute jobs on the six
+# ordinary slots (19 runs queued on 2026-11-06); GitHub-hosted minutes are not an option (the free quota is used up).
+pr-title.yml check required PR-title check, about 10 seconds, pull-requests read only
+shared-rules.yml check required CLAUDE.md and vendored-scripts check, about 15 seconds, contents read only

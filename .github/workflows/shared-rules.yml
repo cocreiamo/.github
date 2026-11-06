@@ -11,7 +11,7 @@ on:
 permissions: {}
 jobs:
   check:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: [self-hosted, cocreiamo-ci-light]
     timeout-minutes: 3
     permissions:
       contents: read
