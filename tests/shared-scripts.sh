@@ -72,5 +72,21 @@ git -C "$tmp/sparse" checkout -q main
 [ ! -e "$tmp/sparse/tasks/gc" ] || fail "the sparse fixture already has the vendored file"
 (cd "$tmp/sparse" && bash -c "$fetch") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "the fetch step failed"; }
 [ -f "$tmp/sparse/tasks/gc" ] && [ -f "$tmp/sparse/otel.sh" ] || fail "the fetch step did not bring the declared files"
+
+# the checkout does not persist its credentials and a sparse checkout is a partial clone: the files come from the remote
+# with the job token, so a git that is not handed it must fail
+mkdir "$tmp/fakebin"
+real_git=$(command -v git)
+cat > "$tmp/fakebin/git" <<FAKE
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "sparse-checkout add" ] && [ "\${GIT_CONFIG_KEY_0:-}" != "http.https://github.com/.extraheader" ]; then
+  echo "fatal: could not read Username for 'https://github.com'" >&2; exit 128
+fi
+exec "$real_git" "\$@"
+FAKE
+chmod +x "$tmp/fakebin/git"
+git -C "$tmp/sparse" sparse-checkout set --no-cone CLAUDE.md .github/shared-scripts
+(cd "$tmp/sparse" && PATH="$tmp/fakebin:$PATH" GH_TOKEN=token bash -c "$fetch") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "the fetch step does not give git the job token"; }
+[ -f "$tmp/sparse/tasks/gc" ] || fail "the fetch step with the token did not bring the declared files"
 [ ! -e "$tmp/sparse/other" ] || fail "the fetch step brought a file nobody declared"
 echo "shared-scripts ok"
