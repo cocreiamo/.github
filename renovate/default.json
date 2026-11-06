@@ -53,7 +53,7 @@
       "automergeType": "pr"
     },
     {
-      "description": "Our own reusable workflows follow main: any bump of the pin merges once the checks are green, and the CLAUDE.md of the repository is rewritten to the canonical founder section of the new pin so that rules / check passes.",
+      "description": "Our own reusable workflows follow main: any bump of the pin merges once the checks are green, and the CLAUDE.md and the vendored scripts of the repository are rewritten to the canonical ones of the new pin so that rules / check passes.",
       "matchManagers": ["github-actions"],
       "matchDepNames": ["cocreiamo/.github"],
       "groupName": null,
@@ -63,7 +63,7 @@
         "commands": [
           "bash -c 'curl -fsSL -H \"Authorization: Bearer $RENOVATE_TOKEN\" -H \"Accept: application/vnd.github.raw\" \"https://api.github.com/repos/cocreiamo/.github/contents/renovate/sync-founder-section.sh?ref={{{newDigest}}}\" | bash -s -- {{{newDigest}}}'"
         ],
-        "fileFilters": ["CLAUDE.md"],
+        "fileFilters": ["**"],
         "executionMode": "branch"
       }
     }

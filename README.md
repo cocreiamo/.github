@@ -8,7 +8,7 @@ Managed by cocreiamo/infrastructure (`tofu/github`).
 | Workflow | What it checks | Call it |
 |---|---|---|
 | `pr-title.yml` | the PR title (the squash commit on main) is a Conventional Commit and not a `test:` | `jobs: {title: {uses: cocreiamo/.github/.github/workflows/pr-title.yml@<sha>}}` on `pull_request` `[opened, edited, synchronize, reopened]` |
-| `shared-rules.yml` | `CLAUDE.md` carries, byte for byte, the section `## Working with the founder` of `shared/working-with-the-founder.md` | `jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}` on `pull_request` `[opened, synchronize, reopened]` |
+| `shared-rules.yml` | `CLAUDE.md` carries, byte for byte, the section `## Working with the founder` of `shared/working-with-the-founder.md`, and every script the repository declares in `.github/shared-scripts` is a copy of the canonical one in `shared/scripts/` (content and executable bit) | `jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}` on `pull_request` `[opened, synchronize, reopened]` |
 
 `bash tests/claude-telemetry.sh` proves that `.claude/settings.json` sends Claude Code telemetry to `otel.cocreiamo.com` (this repository sets it like the others).
 
@@ -17,6 +17,12 @@ Callers pin a commit SHA; Renovate proposes the bumps (see «Renovate»). `bash 
 ## Shared rules
 
 `shared/working-with-the-founder.md` is the one canonical copy of the section `## Working with the founder`, present in the `CLAUDE.md` of infrastructure, deploy and cocreiamo. A caller's token cannot read this private repository's files, so `shared-rules.yml` embeds the text and `tests/shared-rules.sh` keeps the embedded copy equal to the file. To change the rule: edit both here (the test fails otherwise), merge, then in each repository bump the pin of `shared-rules.yml` and carry the new text into its `CLAUDE.md`: until it does, its `rules / check` is red and the merge is blocked. Every caller must grant its job the permission the workflow needs (`pr-title.yml`: `pull-requests: read`; `shared-rules.yml`: `contents: read`), or the run is a `startup_failure`; each repository's checks require it.
+
+## Shared scripts
+
+Scripts that more than one repository needs have one canonical copy in `shared/scripts/` (flat names). Each repository keeps a vendored copy at its own path (it must work offline and the CI never fetches at runtime) and declares it in `.github/shared-scripts`, one `canonical-name local-path` per line (`#` comments; a script a repository deliberately does not share is listed there as a comment with the reason). `shared-rules.yml` carries the whole directory as a base64 gzipped tar (a caller's token cannot read this repository's files) and its check fails, printing the diff, when a declared copy differs, is missing or lost its executable bit, or when the manifest is absent, empty or names a script that is not canonical.
+
+To change a script: edit `shared/scripts/<name>`, run `tools/embed-scripts.sh` (`tests/shared-scripts.sh` fails until the bundle matches), merge, then bump the pin in each repository: the Renovate postUpgradeTask (`renovate/sync-founder-section.sh`, the one command every caller allows) overwrites the declared copies with the canonical ones, so the bump PR is complete. `bash tests/shared-scripts.sh` proves the check on identical, diverged, missing, non-executable and undeclared copies; `bash tests/sync-founder-section.sh` proves the sync.
 
 ## Renovate
 

@@ -33,4 +33,20 @@ cmp -s "$tmp/before" "$tmp/middle/CLAUDE.md" || { echo "FAIL: the sync is not id
 
 mkdir "$tmp/none"; printf '# Repo\n\n## Layout\n\nx\n' > "$tmp/none/CLAUDE.md"
 if sync "$tmp/none"; then echo "FAIL: the sync accepted a CLAUDE.md without the section" >&2; exit 1; fi
+
+scripts_check=$(yq -N '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .run' "$wf")
+bundle=$(yq -N '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .env.SCRIPTS_BUNDLE' "$wf")
+scripts_pass() { (cd "$1" && SCRIPTS_BUNDLE="$bundle" bash -c "$scripts_check") >/dev/null 2>&1; }
+mkdir -p "$tmp/vendored/.github" "$tmp/vendored/tasks"
+{ printf '# Repo\n\n'; old; } > "$tmp/vendored/CLAUDE.md"
+printf 'wt-gc tasks/gc\nwt-list tasks/deep/list\n' > "$tmp/vendored/.github/shared-scripts"
+echo "# stale" > "$tmp/vendored/tasks/gc"; chmod 644 "$tmp/vendored/tasks/gc"
+scripts_pass "$tmp/vendored" && { echo "FAIL: the vendored fixture should start diverged" >&2; exit 1; }
+sync "$tmp/vendored"
+scripts_pass "$tmp/vendored" || { echo "FAIL: the vendored scripts are not canonical after the sync" >&2; exit 1; }
+passes "$tmp/vendored" || { echo "FAIL: the founder section is not canonical after the sync" >&2; exit 1; }
+printf 'no-such-script tasks/gc\n' > "$tmp/vendored/.github/shared-scripts"
+if sync "$tmp/vendored"; then echo "FAIL: the sync accepted a manifest naming a non-canonical script" >&2; exit 1; fi
+printf 'wt-gc ../escape\n' > "$tmp/vendored/.github/shared-scripts"
+if sync "$tmp/vendored"; then echo "FAIL: the sync wrote outside the repository" >&2; exit 1; fi
 echo "sync-founder-section ok"

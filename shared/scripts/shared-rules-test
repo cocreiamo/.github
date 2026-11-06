@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#MISE description="The workflows call cocreiamo/.github's pr-title.yml and shared-rules.yml pinned by commit with the permission each needs (without it the run is a startup_failure), and CLAUDE.md carries the canonical founder section of the pinned ref; each check is proven red on a mutated copy"
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+callers() {
+  local dir="$1" pair name perm wf job uses found
+  for pair in pr-title.yml:pull-requests shared-rules.yml:contents; do
+    name=${pair%%:*} perm=${pair##*:} found=0
+    for wf in "$dir"/*.yml; do
+      for job in $(yq -N '.jobs | keys | .[]' "$wf"); do
+        uses=$(yq -N ".jobs.\"$job\".uses // \"\"" "$wf")
+        [[ $uses == cocreiamo/.github/.github/workflows/$name@* ]] || continue
+        [[ $uses =~ @[0-9a-f]{40}$ ]] || { echo "$wf: job $job calls $name without a commit pin" >&2; return 1; }
+        [ "$(yq -N ".jobs.\"$job\".permissions.\"$perm\" // \"\"" "$wf")" = read ] \
+          || { echo "$wf: job $job calls $name without permissions: $perm: read (the run would be a startup_failure)" >&2; return 1; }
+        found=1
+      done
+    done
+    [ "$found" = 1 ] || { echo "no workflow calls cocreiamo/.github's $name pinned by commit" >&2; return 1; }
+  done
+}
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+callers .github/workflows
+mkdir "$tmp/ok"; cp .github/workflows/*.yml "$tmp/ok/"
+for mutation in \
+  'pr-title.yml del(.jobs.title.permissions)' 'shared-rules.yml del(.jobs.rules.permissions)' \
+  'pr-title.yml .jobs.title.uses |= sub("@[0-9a-f]{40}"; "@main")' 'shared-rules.yml .jobs.rules.uses |= sub("@[0-9a-f]{40}"; "@main")'; do
+  rm -rf "$tmp/bad"; cp -r "$tmp/ok" "$tmp/bad"
+  yq -i "${mutation#* }" "$tmp/bad/${mutation%% *}"
+  if callers "$tmp/bad" 2>/dev/null; then echo "FAIL: accepted a caller mutated by: $mutation" >&2; exit 1; fi
+done
+rm -f "$tmp/ok/shared-rules.yml"
+if callers "$tmp/ok" 2>/dev/null; then echo "FAIL: accepted a repository that does not call shared-rules.yml" >&2; exit 1; fi
+
+# The CI cannot read the private cocreiamo/.github: its required check `rules / check` is the same script there.
+if [ -z "${CI:-}" ]; then
+  sha=$(yq -N '.jobs.rules.uses' .github/workflows/shared-rules.yml | sed 's/.*@//')
+  called=$(gh api -H 'Accept: application/vnd.github.raw' "repos/cocreiamo/.github/contents/.github/workflows/shared-rules.yml?ref=$sha")
+  step='.jobs.check.steps[] | select(.name == "CLAUDE.md carries the canonical section")'
+  CANONICAL=$(yq -N "$step | .env.CANONICAL" <<<"$called")
+  export CANONICAL
+  script=$(yq -N "$step | .run" <<<"$called")
+  bash -c "$script" >/dev/null || { echo "CLAUDE.md differs from the canonical founder section at cocreiamo/.github@$sha" >&2; bash -c "$script" >&2 || true; exit 1; }
+  mkdir "$tmp/repo"; sed 's/Answer first/Answer second/' CLAUDE.md > "$tmp/repo/CLAUDE.md"
+  if (cd "$tmp/repo" && bash -c "$script") >/dev/null 2>&1; then echo "FAIL: the divergence check accepted a diverged section" >&2; exit 1; fi
+fi
+echo "shared-rules ok"

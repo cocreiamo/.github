@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# The shared-rules check carries the canonical scripts of shared/scripts and fails when a repository's vendored copy
+# (declared in its .github/shared-scripts) diverges, loses its executable bit, is missing or is not declared at all.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+wf=.github/workflows/shared-rules.yml
+scripts=shared/scripts
+fail() { echo "FAIL: $*" >&2; exit 1; }
+step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+bundle=$(step "vendored scripts equal the canonical ones" .env.SCRIPTS_BUNDLE)
+[ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored scripts equal the canonical ones' with SCRIPTS_BUNDLE"
+check=$(step "vendored scripts equal the canonical ones" .run)
+fetch=$(step "fetch the vendored scripts" .run)
+[ -n "$fetch" ] && [ "$fetch" != null ] || fail "$wf has no step 'fetch the vendored scripts'"
+
+mkdir "$tmp/embedded"
+base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
+diff -r "$scripts" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from $scripts: run tools/embed-scripts.sh"
+for f in "$scripts"/*; do
+  [ "$(test -x "$f" && echo x)" = "$(test -x "$tmp/embedded/${f##*/}" && echo x)" ] || fail "the executable bit of ${f##*/} differs in the embedded bundle"
+done
+
+# run <dir>: the check as the workflow runs it, in <dir>
+run() { (cd "$1" && SCRIPTS_BUNDLE="$bundle" bash -c "$check") >"$tmp/out" 2>&1; }
+mkrepo() {
+  rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github" "$tmp/repo/tasks"
+  cp -p "$scripts/wt-gc" "$tmp/repo/tasks/gc"
+  cp -p "$scripts/otel-headers.sh" "$tmp/repo/otel.sh"
+  printf '# canonical-name  local-path\nwt-gc tasks/gc\n\notel-headers.sh otel.sh\n' > "$tmp/repo/.github/shared-scripts"
+}
+
+mkrepo
+run "$tmp/repo" || { cat "$tmp/out" >&2; fail "refused a repository whose vendored copies are the canonical ones"; }
+
+mkrepo; echo "# local tweak" >> "$tmp/repo/tasks/gc"
+if run "$tmp/repo"; then fail "accepted a diverged copy"; fi
+grep -q '^+# local tweak' "$tmp/out" || fail "a diverged copy is refused without the diff"
+grep -q 'tasks/gc' "$tmp/out" || fail "a diverged copy is refused without naming it"
+
+mkrepo; rm "$tmp/repo/otel.sh"
+if run "$tmp/repo"; then fail "accepted a missing vendored file"; fi
+
+mkrepo; chmod -x "$tmp/repo/tasks/gc"
+if run "$tmp/repo"; then fail "accepted a copy that lost its executable bit"; fi
+
+mkrepo; printf 'no-such-script tasks/gc\n' >> "$tmp/repo/.github/shared-scripts"
+if run "$tmp/repo"; then fail "accepted a manifest naming a script that is not canonical"; fi
+
+mkrepo; printf 'wt-list ../escape\n' >> "$tmp/repo/.github/shared-scripts"
+if run "$tmp/repo"; then fail "accepted a manifest path outside the repository"; fi
+
+mkrepo; rm "$tmp/repo/.github/shared-scripts"
+if run "$tmp/repo"; then fail "accepted a repository without a manifest"; fi
+
+mkrepo; : > "$tmp/repo/.github/shared-scripts"
+if run "$tmp/repo"; then fail "accepted an empty manifest"; fi
+
+mkrepo; printf 'wt-gc tasks/gc extra\n' > "$tmp/repo/.github/shared-scripts"
+if run "$tmp/repo"; then fail "accepted a malformed manifest line"; fi
+
+# the fetch step brings the declared files into a sparse checkout
+mkrepo
+git -C "$tmp/repo" init -q -b main
+printf 'x\n' > "$tmp/repo/CLAUDE.md"; printf 'y\n' > "$tmp/repo/other"
+git -C "$tmp/repo" add -A
+git -C "$tmp/repo" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm init
+git clone -q --no-checkout "$tmp/repo" "$tmp/sparse"
+git -C "$tmp/sparse" sparse-checkout set --no-cone CLAUDE.md .github/shared-scripts
+git -C "$tmp/sparse" checkout -q main
+[ ! -e "$tmp/sparse/tasks/gc" ] || fail "the sparse fixture already has the vendored file"
+(cd "$tmp/sparse" && bash -c "$fetch") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "the fetch step failed"; }
+[ -f "$tmp/sparse/tasks/gc" ] && [ -f "$tmp/sparse/otel.sh" ] || fail "the fetch step did not bring the declared files"
+[ ! -e "$tmp/sparse/other" ] || fail "the fetch step brought a file nobody declared"
+echo "shared-scripts ok"
