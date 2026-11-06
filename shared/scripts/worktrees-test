@@ -4,7 +4,7 @@
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
@@ -161,6 +161,60 @@ git worktree remove --force "$WT_ROOT/detached"
 wt_new chore/inside
 pr chore/inside MERGED
 check "wt:gc run from inside the worktree it removes still deletes the branch" bash -c 'cd "$WT_ROOT/inside" && "$0" && ! git -C "$1" rev-parse -q --verify chore/inside' "$gc" "$tmp/main"
+
+
+bz="$tmp/bazel"
+export WT_GC_BAZEL_ROOT="$bz"
+mkdir -p "$bz/install/0123" "$bz/cache/repos/x"
+echo keep > "$bz/install/0123/bin"
+echo keep > "$bz/cache/repos/x/blob"
+fake_base() {
+  local d="$bz/$(printf %s "$1" | md5sum | cut -c1-32)"
+  mkdir -p "$d/execroot/ws" "$d/server"
+  printf %s "$1" > "$d/DO_NOT_BUILD_HERE"
+  head -c 20000 /dev/zero > "$d/execroot/ws/out.bin"
+  chmod -R a-w "$d/execroot"
+  echo "$d"
+}
+fake_server() {
+  (cd "${3:-/}" && exec -a "bazel(fake) --output_base=$1/javalog" sleep 300) &
+  echo $! > "$1/server/server.pid.txt"
+  eval "$2=$!"
+}
+cat > "$tmp/bin/bazel" <<'BAZEL'
+#!/usr/bin/env bash
+echo "$PWD $*" >> "$FAKE_GH_DIR/bazel-calls"
+[ "$1" = shutdown ] || exit 0
+kill "$(cat "$WT_GC_BAZEL_ROOT/$(printf %s "$PWD" | md5sum | cut -c1-32)/server/server.pid.txt")"
+BAZEL
+chmod +x "$tmp/bin/bazel"
+
+wt_new chore/bz-merged
+pr chore/bz-merged MERGED
+wt_new chore/bz-kept
+pr chore/bz-kept OPEN
+bz_merged="$(fake_base "$(realpath "$WT_ROOT/bz-merged")")"
+bz_kept="$(fake_base "$(realpath "$WT_ROOT/bz-kept")")"
+bz_orphan="$(fake_base "$tmp/workspace-that-is-gone")"
+bz_live="$(fake_base "$tmp/main")"
+bz_running="$(fake_base "$tmp/workspace-gone-but-served")"
+mkdir -p "$bz/00000000000000000000000000000000"
+fake_server "$bz_merged" srv_merged "$WT_ROOT/bz-merged"
+fake_server "$bz_running" srv_running /
+sleep 0.5
+"$gc" --dry-run > "$tmp/bzdry" 2>&1 || true
+check "wt:gc --dry-run removes no Bazel output base and stops no server" bash -c 'for d in "$@"; do [ -d "$d" ] || exit 1; done; kill -0 "$0" && [ ! -e "$FAKE_GH_DIR/bazel-calls" ] && [ -d "$WT_ROOT/bz-merged" ]' "$srv_merged" "$bz_merged" "$bz_orphan" "$bz_running" "$bz_kept" "$bz_live"
+check "wt:gc --dry-run lists the output bases it would remove, with their sizes, the server it would stop and the orphan" bash -c 'grep -q "would remove Bazel output base $1 ([0-9.]*[KMG]*)" "$3" && grep -q "would stop the Bazel server (pid $4)" "$3" && grep -q "would remove Bazel output base $2 ([0-9.]*[KMG]*) (orphan" "$3"' _ "$bz_merged" "$bz_orphan" "$tmp/bzdry" "$srv_merged"
+check "wt:gc --dry-run does not count the Bazel server as a user of its worktree" bash -c 'grep -q "would remove chore/bz-merged" "$1"' _ "$tmp/bzdry"
+"$gc" > "$tmp/bzgc" 2>&1 || true
+check "wt:gc stops the Bazel server of the worktree it removes, with bazel shutdown run in it" bash -c '! kill -0 "$0" 2>/dev/null && grep -q "bz-merged shutdown$" "$FAKE_GH_DIR/bazel-calls"' "$srv_merged"
+check "wt:gc removes the Bazel output base of the worktree it removes, read-only files included" bash -c '[ ! -d "$WT_ROOT/bz-merged" ] && [ ! -e "$1" ] && grep -q "removed Bazel output base $1" "$2"' _ "$bz_merged" "$tmp/bzgc"
+check "wt:gc removes the output base of a workspace that no longer exists" bash -c '[ ! -e "$1" ] && grep -q "removed Bazel output base $1.*orphan" "$2"' _ "$bz_orphan" "$tmp/bzgc"
+check "wt:gc keeps the output base of a workspace that exists" bash -c '[ -d "$1" ] && [ -d "$2" ] && [ -d "$WT_ROOT/bz-kept" ]' _ "$bz_live" "$bz_kept"
+check "wt:gc keeps the output base whose server still runs, saying so" bash -c 'kill -0 "$0" && [ -d "$1" ] && grep -q "skip   Bazel output base $1.*server" "$2"' "$srv_running" "$bz_running" "$tmp/bzgc"
+check "wt:gc keeps the install base, the repository cache and a directory that is not an output base" bash -c '[ -f "$1/install/0123/bin" ] && [ -f "$1/cache/repos/x/blob" ] && [ -d "$1/00000000000000000000000000000000" ]' _ "$bz"
+kill "$srv_running"
+wait "$srv_running" 2>/dev/null || true
 
 [ "$fails" = 0 ] || { echo "$fails failed" >&2; exit 1; }
 echo "wt:gc and wt:list behave"

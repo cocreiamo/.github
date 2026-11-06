@@ -3,6 +3,9 @@
 # --dry-run (-n) changes nothing: it prints "would remove|archive|delete" for what a real run does.
 # Stale = last commit, branch update and last file change in the worktree all older than WT_GC_STALE_HOURS (default 24).
 # Archive: $WT_GC_ARCHIVE_DIR (default ~/workspaces/archive)/<repo>/<date>/<branch>.{uncommitted.patch,untracked.tgz,bundle}; nothing is removed unless every archive step succeeded.
+# Bazel: removing a worktree first stops its Bazel server (bazel shutdown run in it; the server pid is killed when bazel is not installed), then removes its output base
+# (<output user root>/<md5 of the workspace path>, 20+ GB each). Output bases whose workspace no longer exists and whose server is not running are swept too.
+# Build outputs are reproducible, so nothing of them is archived. The install base, the disk cache and the repository cache are never touched. WT_GC_BAZEL_ROOT overrides the output user root.
 # Remote branches: deleted only when the PR is closed unmerged, the tip is the one the PR closed with and it is stale; GitHub keeps the PR and its "Restore branch". Without any PR or younger: report-only.
 set -euo pipefail
 
@@ -17,6 +20,7 @@ esac
 cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 stale_hours="${WT_GC_STALE_HOURS:-24}"
 case "$stale_hours" in "" | *[!0-9]*) echo "refused: WT_GC_STALE_HOURS must be a whole number of hours" >&2; exit 2 ;; esac
+bazel_root="${WT_GC_BAZEL_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/bazel/_bazel_${USER:-$(id -un)}}"
 archive_root="${WT_GC_ARCHIVE_DIR:-$HOME/workspaces/archive}"
 now="$(date +%s)"
 repo_name="$(basename "$PWD")"
@@ -44,8 +48,61 @@ scan_holders() {
 holders_file="$(mktemp -u)"
 trap 'rm -f "$holders_file"' EXIT
 
+# Bazel output base of a workspace, when it exists and records that very path.
+bazel_base_of() {
+  local ws h
+  ws="$(realpath "$1" 2>/dev/null || echo "$1")"
+  h="$(printf %s "$ws" | md5sum | cut -c1-32)"
+  [ -f "$bazel_root/$h/DO_NOT_BUILD_HERE" ] && [ "$(cat "$bazel_root/$h/DO_NOT_BUILD_HERE")" = "$ws" ] && echo "$bazel_root/$h"
+  return 0
+}
+
+# Pid of the Bazel server of an output base, when it runs: the recorded pid is alive and its command line names the base.
+bazel_server_of() {
+  local pid
+  pid="$(cat "$1/server/server.pid.txt" 2>/dev/null || true)"
+  case "$pid" in "" | *[!0-9]*) return 0 ;; esac
+  if ps -o args= -p "$pid" 2>/dev/null | grep -qF -- "$1/"; then echo "$pid"; fi
+  return 0
+}
+
+bazel_size() { du -sh "$1" 2>/dev/null | cut -f1; }
+
+# Sets bz_base and bz_pid for the worktree at $1.
+bazel_look() {
+  bz_base="$(bazel_base_of "$1")"
+  bz_pid=""
+  [ -z "$bz_base" ] || bz_pid="$(bazel_server_of "$bz_base")"
+}
+
+# Stops the Bazel server of the worktree at $1 (still in place) and sets bz_base for bazel_purge.
+bazel_stop() {
+  bazel_look "$1"
+  [ -n "$bz_pid" ] || return 0
+  if command -v bazel > /dev/null; then (cd "$1" && timeout 60 bazel shutdown > /dev/null 2>&1) || true; fi
+  [ -z "$(bazel_server_of "$bz_base")" ] || kill "$bz_pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(bazel_server_of "$bz_base")" ] && break; sleep 0.5; done
+}
+
+# Removes an output base; Bazel leaves read-only files in it.
+bazel_purge() {
+  local dir="$1" why="${2:-}"
+  if [ -n "$(bazel_server_of "$dir")" ]; then echo "skip   Bazel output base $dir: its server is still running"; return; fi
+  chmod -R u+w "$dir" 2>/dev/null || true
+  if rm -rf "$dir"; then echo "removed Bazel output base $dir${why:+ ($why)}"; else echo "skip   Bazel output base $dir: could not be removed"; fi
+}
+
+# What a removal of the worktree at $1 would do to its Bazel output base.
+bazel_say() {
+  bazel_look "$1"
+  [ -z "$bz_base" ] || [ -z "$bz_pid" ] || echo "would stop the Bazel server (pid $bz_pid) of $1"
+  [ -z "$bz_base" ] || echo "would remove Bazel output base $bz_base ($(bazel_size "$bz_base"))"
+}
+
 holders() {
-  local dir="$1"
+  local dir="$1" bpid=""
+  bazel_look "$dir"
+  bpid="$bz_pid"
   if [ -d "$proc_root/self" ]; then
     [ -e "$holders_file" ] || scan_holders
     local pid cmd
@@ -53,7 +110,7 @@ holders() {
       # A process can exit between the scan and this read; the redirection error is the shell's, so the group takes the 2>.
       cmd="$({ tr '\0' ' ' < "$proc_root/$pid/cmdline" | cut -c1-60; } 2>/dev/null || true)"
       echo "pid $pid ($cmd)"
-    done < <(awk -F'\t' -v d="$dir" '$2 == d || index($2, d "/") == 1 { print $1 }' "$holders_file" | sort -u)
+    done < <(awk -F'\t' -v d="$dir" '$2 == d || index($2, d "/") == 1 { print $1 }' "$holders_file" | sort -u | grep -vx "${bpid:-0}" || true)
   elif command -v lsof > /dev/null; then
     lsof -Fp +D "$dir" 2>/dev/null | sed -n 's/^p/pid /p' | sort -u
   else
@@ -144,15 +201,20 @@ handle() {
     fi
     if [ "$dry" = true ]; then
       echo "would archive $branch${path:+ ($path)} to $(archive_dir) and remove it ($why)"
+      [ -z "$path" ] || bazel_say "$path"
       return
     fi
     if ! files="$(archive "$branch" "$path")"; then
       echo "skip   $branch: archive failed, nothing removed"
       return
     fi
-    if [ -n "$path" ] && ! git worktree remove --force "$path" 2>/dev/null; then
-      echo "skip   $branch: archived but git could not remove $path (locked?)"
-      return
+    if [ -n "$path" ]; then
+      bazel_stop "$path"
+      if ! git worktree remove --force "$path" 2>/dev/null; then
+        echo "skip   $branch: archived but git could not remove $path (locked?)"
+        return
+      fi
+      [ -z "$bz_base" ] || bazel_purge "$bz_base" "worktree $branch"
     fi
     git branch -q -D "$branch"
     echo "archived $branch ($why) to ${files:-nothing to archive}" | tr '\n' ' '
@@ -179,12 +241,15 @@ handle() {
     fi
     if [ "$dry" = true ]; then
       echo "would remove $branch${path:+ ($path)}"
+      bazel_say "$path"
       return
     fi
+    bazel_stop "$path"
     if ! git worktree remove "$path" 2>/dev/null; then
       echo "skip   $branch: git could not remove $path (locked?)"
       return
     fi
+    [ -z "$bz_base" ] || bazel_purge "$bz_base" "worktree $branch"
   elif [ "$dry" = true ]; then
     echo "would remove $branch"
     return
@@ -240,6 +305,24 @@ while IFS= read -r branch; do
       ;;
   esac
 done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin)
+
+# Output bases whose workspace is gone (a removed worktree, a deleted checkout): the install base, the disk cache and the
+# repository cache are not output bases and are never looked at.
+if [ -d "$bazel_root" ]; then
+  for dir in "$bazel_root"/*; do
+    case "${dir##*/}" in *[!0-9a-f]* | "") continue ;; esac
+    [ "${#dir}" -eq $((${#bazel_root} + 33)) ] && [ -f "$dir/DO_NOT_BUILD_HERE" ] || continue
+    ws="$(cat "$dir/DO_NOT_BUILD_HERE")"
+    [ -n "$ws" ] && [ ! -e "$ws" ] || continue
+    if [ -n "$(bazel_server_of "$dir")" ]; then
+      echo "skip   Bazel output base $dir: workspace $ws is gone but its server is still running"
+    elif [ "$dry" = true ]; then
+      echo "would remove Bazel output base $dir ($(bazel_size "$dir")) (orphan: workspace $ws is gone)"
+    else
+      bazel_purge "$dir" "orphan: workspace $ws is gone"
+    fi
+  done
+fi
 
 [ "$dry" = true ] || git worktree prune
 if [ "${#report[@]}" -gt 0 ]; then
