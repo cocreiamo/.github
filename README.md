@@ -12,7 +12,7 @@ Managed by cocreiamo/infrastructure (`tofu/github`).
 
 `bash tests/claude-telemetry.sh` proves that `.claude/settings.json` sends Claude Code telemetry to `otel.cocreiamo.com` (this repository sets it like the others).
 
-Callers pin a commit SHA; Renovate proposes the bumps (see «Renovate»). `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
+Callers pin a commit SHA; Renovate proposes the bumps (see «Renovate»). `hooks/check-conflict-markers` (the pre-commit hook, set as `core.hooksPath` by mise, and a step of `check`) refuses a line starting with `<<<<<<<` or `>>>>>>>`; `bash tests/conflict-markers.sh` proves it on conflicted and clean files. `bash tests/pr-title.sh` proves the title check on good and bad titles, `bash tests/shared-rules.sh` the shared-rules check on a canonical, a diverged and a missing section.
 
 ## Shared rules
 
