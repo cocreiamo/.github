@@ -1,0 +1,7 @@
+id: dotgithub/test/post-merge-revert.sh
+repo: dotgithub
+invariant: 'post-merge-revert.yml: the decision (which commit to revert, when to only alert, when to skip) and the whole flow against a fake `gh`, including that a dry run changes nothing.'
+runs:
+- pr-ci
+command: bash tests/post-merge-revert.sh
+file: tests/post-merge-revert.sh

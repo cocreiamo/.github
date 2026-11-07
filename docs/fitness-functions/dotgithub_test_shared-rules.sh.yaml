@@ -1,0 +1,7 @@
+id: dotgithub/test/shared-rules.sh
+repo: dotgithub
+invariant: The shared-rules check passes on a CLAUDE.md that carries the canonical section and fails on a diverged or missing one.
+runs:
+- pr-ci
+command: bash tests/shared-rules.sh
+file: tests/shared-rules.sh

@@ -1,0 +1,7 @@
+id: dotgithub/hook/pre-commit
+repo: dotgithub
+invariant: git hook pre-commit
+runs:
+- local
+command: hooks/pre-commit
+file: hooks/pre-commit

@@ -1,0 +1,7 @@
+id: dotgithub/test/eol-check.sh
+repo: dotgithub
+invariant: 'The shared EOL check (shared/scripts/eol_check.py): pin discovery from mise.toml, Ansible variables, the Hetzner image, kustomize charts, image tags and FROM lines, and the 60-day rule against a fake endoflife.date.'
+runs:
+- pr-ci
+command: bash tests/eol-check.sh
+file: tests/eol-check.sh

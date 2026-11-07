@@ -1,0 +1,7 @@
+id: dotgithub/test/shared-scripts.sh
+repo: dotgithub
+invariant: The shared-rules check carries the canonical scripts of shared/scripts and fails when a repository's vendored copy
+runs:
+- pr-ci
+command: bash tests/shared-scripts.sh
+file: tests/shared-scripts.sh

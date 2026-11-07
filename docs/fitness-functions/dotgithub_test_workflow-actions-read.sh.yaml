@@ -1,0 +1,7 @@
+id: dotgithub/test/workflow-actions-read.sh
+repo: dotgithub
+invariant: 'A reusable workflow that calls the Actions API (runs, jobs, logs) must declare actions: read on the job that does it: the App token has no Actions permission, so the call needs the run''s own token, and that token only has what the job declares.'
+runs:
+- pr-ci
+command: bash tests/workflow-actions-read.sh
+file: tests/workflow-actions-read.sh

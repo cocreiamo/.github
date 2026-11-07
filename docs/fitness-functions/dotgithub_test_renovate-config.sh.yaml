@@ -1,0 +1,7 @@
+id: dotgithub/test/renovate-config.sh
+repo: dotgithub
+invariant: The Renovate configs are valid (strict) and the validator refuses a bad one; the shared postUpgradeTask command is
+runs:
+- pr-ci
+command: bash tests/renovate-config.sh
+file: tests/renovate-config.sh
