@@ -1,0 +1,133 @@
+# Reusable: after a push to main, when a job failed that must never be reverted (a publish: Harbor, Trivy, signing, the
+# registry), open an issue assigned to the founder, one per failing job, or comment on the one already open. A caller adds:
+#   post-publish:
+#     needs: [publish]
+#     if: ${{ always() && github.event_name == 'push' && needs.publish.result == 'failure' }}
+#     permissions: {actions: read}
+#     uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@<sha>
+#     with: {failed: "publish", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
+#     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+# The issue carries the run link and the failing lines of the job log; the log is read with the run's own token, and an unreadable log
+# never stops the alert. Same transport and label as post-merge-revert.yml; this workflow never writes anything but issues.
+name: post-merge-alert
+on:
+  workflow_call:
+    inputs:
+      failed:
+        description: names of the failed jobs, separated by commas or spaces; each gets its own issue
+        type: string
+        required: true
+      app-id:
+        type: string
+        required: true
+      dry-run:
+        type: boolean
+        default: false
+      assignee:
+        type: string
+        default: iambilotta
+    secrets:
+      app-private-key:
+        required: true
+permissions: {}
+jobs:
+  alert:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+      - name: alert
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          READ_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          FAILED: ${{ inputs.failed }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SCRIPT: |
+            import json, os, re, sys, urllib.error, urllib.request
+
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, *a, **k):
+                    return None
+
+            def call(method, path, body=None, token="GH_TOKEN"):
+                req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ[token], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        raw = r.read()
+                except urllib.error.HTTPError as e:
+                    raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
+                return json.loads(raw) if raw else None
+
+            def job_log(repo, job_id):
+                req = urllib.request.Request(API + "/repos/%s/actions/jobs/%d/logs" % (repo, job_id), headers={"Authorization": "Bearer " + os.environ["READ_TOKEN"]})
+                try:
+                    urllib.request.build_opener(NoRedirect).open(req, timeout=30).close()
+                    raise RuntimeError("no redirect to the log")
+                except urllib.error.HTTPError as e:
+                    if e.code not in (301, 302, 307):
+                        raise RuntimeError("log: %s" % e.code)
+                    location = e.headers["Location"]
+                with urllib.request.urlopen(urllib.request.Request(location), timeout=60) as r:
+                    return r.read().decode(errors="replace")
+
+            def failing_lines(text, keep=30):
+                lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", re.sub(r"\x1b\[[0-9;]*m", "", l)).rstrip() for l in text.splitlines()]
+                lines = [l for l in lines if l.strip()]
+                hits = [l for l in lines if re.search(r"error|fail|denied|not found|unauthorized|forbidden|exit code", l, re.I)]
+                return (hits or lines)[-keep:]
+
+            def run(env):
+                repo, dry = env["REPO"], env["DRY_RUN"] == "true"
+                names = [n for n in re.split(r"[,\s]+", env["FAILED"]) if n]
+                try:
+                    jobs = {j["name"]: j for j in call("GET", "/repos/%s/actions/runs/%s/jobs?per_page=100" % (repo, env["RUN_ID"]), token="READ_TOKEN")["jobs"]}
+                except RuntimeError as e:
+                    print("jobs unreadable: %s" % e, file=sys.stderr)
+                    jobs = {}
+                opened = call("GET", "/repos/%s/issues?state=open&labels=main-red&per_page=100" % repo)
+                for name in names:
+                    marker = "<!-- post-merge-alert:%s -->" % name
+                    lines = []
+                    if name in jobs:
+                        try:
+                            lines = failing_lines(job_log(repo, jobs[name]["id"]))
+                        except (RuntimeError, urllib.error.URLError) as e:
+                            print("log of %s unreadable: %s" % (name, e), file=sys.stderr)
+                    body = "\n".join(["The job %s failed on %s on main: %s" % (name, env["SHA"], env["RUN_URL"]), ""]
+                                     + (["Failing lines:", "```"] + [l[:300] for l in lines] + ["```"] if lines else ["The log could not be read: open the run."])
+                                     + ["", "No automatic revert: a failed job of this kind is fixed forward.", "", marker])[:60000]
+                    existing = [i for i in opened if marker in (i.get("body") or "")]
+                    if dry:
+                        print("dry run, would %s for %s" % ("comment on #%d" % existing[0]["number"] if existing else "open an issue assigned to " + env["ASSIGNEE"], name))
+                        continue
+                    if existing:
+                        call("POST", "/repos/%s/issues/%d/comments" % (repo, existing[0]["number"]), {"body": body})
+                        print("commented on #%d for %s" % (existing[0]["number"], name))
+                        continue
+                    try:
+                        call("POST", "/repos/%s/labels" % repo, {"name": "main-red", "color": "b60205"})
+                    except RuntimeError:
+                        pass
+                    issue = call("POST", "/repos/%s/issues" % repo, {"title": "main is red: %s failed" % name, "body": body, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]]})
+                    print("alert issue #%d for %s" % (issue["number"], name))
+                return 0
+
+            if __name__ == "__main__":
+                sys.exit(run(os.environ))
+        run: python3 -I -c "$SCRIPT"
