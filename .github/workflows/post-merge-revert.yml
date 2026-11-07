@@ -9,7 +9,7 @@
 #     with: {failed: "<names of the jobs>", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
 # No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
-# revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past, a commit whose
+# revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past (unless the caller passes moved-ok), a commit whose
 # revert is already open; the first three still raise the alert. dry-run does everything except write.
 name: post-merge-revert
 on:
@@ -27,6 +27,10 @@ on:
         type: string
         default: ""
       dry-run:
+        type: boolean
+        default: false
+      moved-ok:
+        description: judge a commit main has moved past (live verification, where no newer run would blame it)
         type: boolean
         default: false
       assignee:
@@ -59,6 +63,7 @@ jobs:
           FAILED: ${{ inputs.failed }}
           ASSIGNEE: ${{ inputs.assignee }}
           DRY_RUN: ${{ inputs.dry-run }}
+          MOVED_OK: ${{ inputs.moved-ok }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
             import json, os, sys, urllib.error, urllib.request
@@ -85,7 +90,7 @@ jobs:
                 return out["data"]
 
             def decide(f):
-                if f["head_sha"] != f["sha"]:
+                if f["head_sha"] != f["sha"] and not f["moved_ok"]:
                     return {"action": "skip", "reason": "main has moved on: the run of the newer commit decides"}
                 if f["open_revert"]:
                     return {"action": "skip", "reason": "a revert of this commit is already open"}
@@ -109,7 +114,7 @@ jobs:
                     pr = {"number": p["number"], "title": p["title"], "head_ref": p["head"]["ref"], "author": p["user"]["login"], "node_id": p["node_id"]}
                 marker = "<!-- post-merge-revert:%s -->" % sha
                 opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
-                return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "open_revert": any(marker in (p.get("body") or "") for p in opened)}
+                return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened)}
 
             def run(env):
                 repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
