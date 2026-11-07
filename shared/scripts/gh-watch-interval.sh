@@ -32,10 +32,10 @@ done
 cd "$repo"
 shared_paths() { # the vendored copies of the three shared scripts, which carry the bare watch on purpose
   [ -f .github/shared-scripts ] || return 0
-  awk '$1 == "gh-watch-interval.sh" || $1 == "pr-wait-test" || $1 == "pr-wait.sh" { print "-e " $2 }' .github/shared-scripts
+  awk '$1 == "gh-watch-interval.sh" || $1 == "pr-wait-test" || $1 == "pr-wait.sh" { print $2 }' .github/shared-scripts
 }
 mapfile -t files < <(git ls-files --cached --others --exclude-standard |
-  grep -vxF -e shared/scripts/gh-watch-interval.sh -e shared/scripts/pr-wait-test -e shared/scripts/pr-wait.sh $(shared_paths) |
+  grep -vxFf <(printf '%s\n' shared/scripts/gh-watch-interval.sh shared/scripts/pr-wait-test shared/scripts/pr-wait.sh; shared_paths) |
   while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done)
 found="$(offenders "${files[@]}")"
 if [ -n "$found" ]; then
