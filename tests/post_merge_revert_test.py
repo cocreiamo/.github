@@ -59,7 +59,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         LOG.append(("GET", self.path, None))
         p = self.path
-        if p.endswith("/git/ref/heads/main"):
+        if "/actions/" in p and (SC["runs_forbidden"] or self.headers["Authorization"] != "Bearer readtok"):
+            self.reply(403, {"message": "Resource not accessible by integration"})
+        elif SC["ref_fails"] and p.endswith("/git/ref/heads/main"):
+            self.reply(500, {})
+        elif p.endswith("/git/ref/heads/main"):
             self.reply(200, {"object": {"sha": SC["head"]}})
         elif p.endswith("/actions/runs/1"):
             self.reply(200, {"workflow_id": 5, "created_at": "2026-01-02T00:00:00Z"})
@@ -97,11 +101,11 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 def run(dry=False, **kw):
     SC.clear()
-    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": []})
+    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": [], "runs_forbidden": False, "ref_fails": False})
     SC.update(kw)
     del LOG[:]
     env = {
-        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "REPO": "cocreiamo/x", "SHA": SHA,
+        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": SHA,
         "FAILED": "fast, slow-lint", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
         "DRY_RUN": "true" if dry else "false",
     }
@@ -160,4 +164,14 @@ r, calls = run(revert_fails=True)
 check("a revert that cannot be made fails the job", r.returncode != 0, True)
 if "main-red" not in json.dumps(calls) or not any(c[1].endswith("/issues/77/comments") for c in calls):
     sys.exit("FAIL: the alert must go out before the revert is tried, and say when it failed")
+r, calls = run(runs_forbidden=True)
+check("runs unreadable: the decision still goes on and reverts", r.returncode, 0)
+check("runs unreadable: reverted", "revertPullRequest" in json.dumps(calls), True)
+check("the runs API is never called with the App token", [c for c in calls if "/actions/" in c[1]] != [], True)
+
+r, calls = run(ref_fails=True)
+check("a failure inside the decision fails the job", r.returncode != 0, True)
+issues = [c for c in calls if c[0] == "POST" and c[1].endswith("/issues")]
+if len(issues) != 1 or "main-red" not in json.dumps(issues) or "revertPullRequest" in json.dumps(calls):
+    sys.exit("FAIL: an exception in the decision must raise the alert and revert nothing: " + json.dumps(calls))
 print("python cases ok")

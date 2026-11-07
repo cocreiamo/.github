@@ -31,6 +31,7 @@ jobs:
       - run: bash tests/light-jobs.sh
       - run: bash tests/post-merge-revert.sh
       - run: bash tests/post-merge-alert.sh
+      - run: bash tests/workflow-actions-read.sh
       - run: bash tests/shared-rules.sh
       - run: bash tests/shared-scripts.sh
       - run: bash tests/claude-telemetry.sh
