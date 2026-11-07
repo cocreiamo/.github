@@ -104,7 +104,8 @@ holder_file=$!
 holder_old=$!
 sleep 0.5
 
-gc="$repo/mise-tasks/wt/gc"
+gc="${WT_GC:-$repo/mise-tasks/wt/gc}"
+list="${WT_LIST:-$repo/mise-tasks/wt/list}"
 "$gc" --dry-run > "$tmp/dry" 2>&1 || true
 check "wt:gc --dry-run removes nothing" bash -c '[ -d "$WT_ROOT/merged" ] && git rev-parse -q --verify chore/merged && git rev-parse -q --verify chore/orphan-merged'
 check "wt:gc --dry-run says what it would remove" bash -c 'grep -q "would remove chore/merged" "$1" && grep -q "would remove chore/orphan-merged" "$1"' _ "$tmp/dry"
@@ -116,7 +117,7 @@ touch "$tmp/blocked"
 WT_GC_ARCHIVE_DIR="$tmp/blocked/x" "$gc" > "$tmp/gcfail" 2>&1 || true
 check "wt:gc removes nothing when the archive fails" bash -c 'grep -q "skip   chore/stale: .*archive failed" "$1" && for t in stale stale-nopr stale-clean; do [ -d "$WT_ROOT/$t" ] && git rev-parse -q --verify "chore/$t" > /dev/null || exit 1; done && git rev-parse -q --verify chore/stale-branch' _ "$tmp/gcfail"
 "$gc" > "$tmp/gc" 2>&1 || true
-check "wt:list shows every worktree" bash -c '"$0" | grep -q "chore/open"' "$repo/mise-tasks/wt/list"
+check "wt:list shows every worktree" bash -c '"$0" | grep -q "chore/open"' "$list"
 check "wt:gc removes a clean worktree whose PR is merged, and its branch" bash -c '[ ! -d "$WT_ROOT/merged" ] && ! git rev-parse -q --verify chore/merged'
 check "wt:gc removes the local branch of a merged PR that has no worktree" bash -c '! git rev-parse -q --verify chore/orphan-merged'
 check "wt:gc keeps a dirty worktree and says why" bash -c '[ -d "$WT_ROOT/dirty" ] && grep -q "skip.*chore/dirty.*uncommitted" "$1"' _ "$tmp/gc"

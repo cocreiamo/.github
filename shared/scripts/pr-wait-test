@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# mise run pr:wait (shared/scripts/pr-wait.sh, or its vendored copy named in .github/shared-scripts) against a fake gh: the interval is never under 60 s, a rate-limit answer is slept through until the reset
+# (never a failure), a real failure keeps its exit code, and a wait that outlasts the budget exits 75.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+wait_task="$repo/shared/scripts/pr-wait.sh"
+[ ! -f "$repo/.github/shared-scripts" ] || wait_task="$repo/$(awk '$1 == "pr-wait.sh" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/bin"
+
+cat > "$tmp/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+echo "gh $*" >> "$FAKE_LOG"
+if [ "$1 $2" = "api rate_limit" ]; then echo "$(( $(date +%s) + RESET_IN ))"; exit 0; fi
+if [ "$1 $2" = "pr view" ]; then
+  views="$(grep -c '^gh pr view' "$FAKE_LOG")"
+  if [ "$views" -le "${OPEN_VIEWS:-0}" ]; then echo OPEN; else echo "${FINAL_STATE:-MERGED}"; fi
+  exit 0
+fi
+n="$(grep -c -E '^gh (pr checks|run watch)' "$FAKE_LOG")"
+if [ "$n" -le "${LIMITED_CALLS:-0}" ]; then echo "HTTP 403: API rate limit exceeded for user ID 1 (https://api.github.com/graphql)"; exit 1; fi
+if [ -n "${FAIL_TEXT:-}" ]; then echo "$FAIL_TEXT"; exit 1; fi
+echo "all checks were successful"
+FAKE
+cat > "$tmp/bin/sleep" <<'FAKE'
+#!/usr/bin/env bash
+echo "sleep $*" >> "$FAKE_LOG"
+FAKE
+chmod +x "$tmp/bin/gh" "$tmp/bin/sleep"
+
+run() { # run <name> [env...] -- [task args]: sets rc and log
+  local name="$1"; shift
+  local envs=()
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  export FAKE_LOG="$tmp/$name.log"
+  : > "$FAKE_LOG"
+  rc=0
+  env PATH="$tmp/bin:$PATH" RESET_IN=30 "${envs[@]}" "$wait_task" "$@" > "$tmp/$name.out" 2>&1 || rc=$?
+  log="$(cat "$FAKE_LOG")"
+}
+fail() { echo "FAIL: $1" >&2; cat "$tmp/$name.out" >&2; echo "$log" >&2; exit 1; }
+
+name=ok; run ok -- 7
+[ "$rc" = 0 ] || fail "a green PR must exit 0, got $rc"
+grep -qF 'gh pr checks 7 --required --watch --fail-fast --interval 60' <<< "$log" || fail "the watch must be required, fail-fast and 60 s"
+
+name=slow; run slow PR_WAIT_INTERVAL=5 --
+grep -qF -- '--interval 60' <<< "$log" || fail "an interval under 60 s must be raised to 60"
+
+name=runmode; run runmode -- --run 99
+grep -qF 'gh run watch 99 --exit-status --interval 60' <<< "$log" || fail "a run is watched with --exit-status and --interval 60"
+
+name=limited; run limited LIMITED_CALLS=1 --
+[ "$rc" = 0 ] || fail "a rate limit must be slept through, then succeed; got $rc"
+[ "$(grep -c '^gh pr checks' <<< "$log")" = 2 ] || fail "the watch must be retried once after the reset"
+slept="$(sed -n 's/^sleep //p' <<< "$log" | head -n 1)"
+[ "$slept" -ge 30 ] && [ "$slept" -le 40 ] || fail "sleep until the reset (about 35 s), got '$slept'"
+
+name=early; run early OPEN_VIEWS=1 --
+[ "$rc" = 0 ] || fail "green checks on an open PR keep waiting until the merge, got $rc"
+[ "$(grep -c '^gh pr checks' <<< "$log")" = 2 ] || fail "an open PR after green checks is watched again"
+
+name=closed; run closed FINAL_STATE=CLOSED --
+[ "$rc" = 1 ] || fail "a PR closed unmerged exits 1, got $rc"
+
+name=failing; run failing FAIL_TEXT="X build fail" -- 7
+[ "$rc" = 1 ] || fail "a failed check keeps exit 1, got $rc"
+[ "$(grep -c '^gh pr checks' <<< "$log")" = 1 ] || fail "a failure that is not a rate limit is not retried"
+
+name=budget; run budget LIMITED_CALLS=9 RESET_IN=1000 PR_WAIT_BUDGET=100 --
+[ "$rc" = 75 ] || fail "a reset beyond the budget exits 75, got $rc"
+echo "pr:wait waits at 60 s, sleeps through a rate limit and keeps the exit codes"

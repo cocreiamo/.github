@@ -11,3 +11,15 @@ uv = "0.13.7"
 [hooks]
 postinstall = "git config core.hooksPath hooks"
 enter = "git config core.hooksPath hooks"
+
+[tasks."wt:gc"]
+description = "Remove the worktrees and branches whose PR is merged and archive stale ones: mise run wt:gc [-- --dry-run]"
+run = "shared/scripts/wt-gc"
+
+[tasks."wt:list"]
+description = "Show where every worktree stands"
+run = "shared/scripts/wt-list"
+
+[tasks."pr:wait"]
+description = "Wait for a PR's required checks (or --run <id>) at 60 s polls: mise run pr:wait [<pr>|--run <id>]"
+run = "shared/scripts/pr-wait.sh"
