@@ -5,7 +5,7 @@
 # ///
 """Every check of a repository has an entry in its own docs/fitness-functions/, and every entry is valid.
 
-usage: fitness_entries.py <cocreiamo|dotgithub> [root] [--entries <dir>]
+usage: fitness_entries.py <cocreiamo|dotgithub|infrastructure> [root] [--entries <dir>]
 
 The schema is the one of docs/fitness-functions.md in cocreiamo/deploy ("Where an entry lives"): one mapping per file, named after
 its id; a mise task is an overlay (id, repo, task, runs) whose invariant, command and file come from `mise tasks ls --json`; any
@@ -26,6 +26,10 @@ DIR = Path("docs") / "fitness-functions"
 PATTERNS = {
     "cocreiamo": ("tools/tests/*", "tools/policy/*.rego", "tools/tasks/check/*", "tools/tasks/ci"),
     "dotgithub": ("tests/*.sh", "hooks/*"),
+    "infrastructure": (
+        "mise-tasks/test/*", "mise-tasks/check/*", "mise-tasks/verify", "mise-tasks/checkpoint", "mise-tasks/lint",
+        "tests/policy/*.rego", "tests/contracts/*",
+    ),
 }
 DERIVED = ("invariant", "command", "file", "symbol")
 
