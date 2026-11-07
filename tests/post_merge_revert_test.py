@@ -9,7 +9,7 @@ PR = {"number": 12, "title": "feat: add x", "head_ref": "add-x", "author": "iamb
 
 
 def facts(**kw):
-    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False}
+    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False}
     f.update(kw)
     return f
 
@@ -25,6 +25,9 @@ def action(**kw):
 
 check("a human PR on the head of main is reverted", action(), "revert")
 check("main moved on: skip", action(head_sha=OTHER), "skip")
+check("main moved on but the caller judges a commit that is no longer the head: revert", action(head_sha=OTHER, moved_ok=True), "revert")
+check("moved_ok never reverts a revert", action(head_sha=OTHER, moved_ok=True, commit_title="revert: feat: add x (#13)"), "alert")
+check("moved_ok still skips a revert already open", action(head_sha=OTHER, moved_ok=True, open_revert=True), "skip")
 check("a revert PR already open: skip", action(open_revert=True), "skip")
 check("main moved on wins over everything", action(head_sha=OTHER, pr=None), "skip")
 check("never revert a revert (commit title)", action(commit_title="revert: feat: add x (#13)"), "alert")
