@@ -26,6 +26,14 @@ on:
       assignee:
         type: string
         default: iambilotta
+      title-prefix:
+        description: start of the issue title; the drill sets its own so it is never mistaken for a red main
+        type: string
+        default: "main is red: "
+      label:
+        description: label of the issue and key of the lookup of the open one
+        type: string
+        default: main-red
     secrets:
       app-private-key:
         required: true
@@ -54,6 +62,8 @@ jobs:
           FAILED: ${{ inputs.failed }}
           ASSIGNEE: ${{ inputs.assignee }}
           DRY_RUN: ${{ inputs.dry-run }}
+          TITLE_PREFIX: ${{ inputs.title-prefix }}
+          LABEL: ${{ inputs.label }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
             import json, os, re, sys, urllib.error, urllib.request
@@ -100,7 +110,7 @@ jobs:
                 except RuntimeError as e:
                     print("jobs unreadable: %s" % e, file=sys.stderr)
                     jobs = {}
-                opened = call("GET", "/repos/%s/issues?state=open&labels=main-red&per_page=100" % repo)
+                opened = call("GET", "/repos/%s/issues?state=open&labels=%s&per_page=100" % (repo, env["LABEL"]))
                 for name in names:
                     marker = "<!-- post-merge-alert:%s -->" % name
                     lines = []
@@ -121,10 +131,10 @@ jobs:
                         print("commented on #%d for %s" % (existing[0]["number"], name))
                         continue
                     try:
-                        call("POST", "/repos/%s/labels" % repo, {"name": "main-red", "color": "b60205"})
+                        call("POST", "/repos/%s/labels" % repo, {"name": env["LABEL"], "color": "b60205"})
                     except RuntimeError:
                         pass
-                    issue = call("POST", "/repos/%s/issues" % repo, {"title": "main is red: %s failed" % name, "body": body, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]]})
+                    issue = call("POST", "/repos/%s/issues" % repo, {"title": "%s%s failed" % (env["TITLE_PREFIX"], name), "body": body, "labels": [env["LABEL"]], "assignees": [env["ASSIGNEE"]]})
                     print("alert issue #%d for %s" % (issue["number"], name))
                 return 0
 
