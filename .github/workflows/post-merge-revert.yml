@@ -4,10 +4,12 @@
 #   post-merge:
 #     needs: [<the required jobs>]
 #     if: ${{ always() && github.event_name == 'push' && contains(needs.*.result, 'failure') }}
-#     permissions: {}
+#     permissions: {actions: read}
 #     uses: cocreiamo/.github/.github/workflows/post-merge-revert.yml@<sha>
 #     with: {failed: "<names of the jobs>", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+# The runs are read with the run's own token (actions: read, as post-merge-alert.yml does): the App has no Actions permission. A failure anywhere in the
+# decision raises the alert and fails the job, so a red main is never silent.
 # No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
 # revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past (unless the caller passes moved-ok), a commit whose
 # revert is already open, a commit after which a later run of the same workflow on main succeeded (main is green again); the first three still raise the alert. dry-run does everything except write.
@@ -44,7 +46,8 @@ jobs:
   revert:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      actions: read
     steps:
       - id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -58,6 +61,7 @@ jobs:
       - name: decide and act
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          READ_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ inputs.sha || github.sha }}
           FAILED: ${{ inputs.failed }}
@@ -70,9 +74,9 @@ jobs:
 
             API = os.environ.get("API_URL", "https://api.github.com")
 
-            def call(method, path, body=None):
+            def call(method, path, body=None, token="GH_TOKEN"):
                 req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
-                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                    "Authorization": "Bearer " + os.environ[token], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
                 try:
                     with urllib.request.urlopen(req, timeout=30) as r:
                         raw = r.read()
@@ -80,8 +84,8 @@ jobs:
                     raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
                 return json.loads(raw) if raw else None
 
-            def api(path):
-                return call("GET", path)
+            def api(path, token="GH_TOKEN"):
+                return call("GET", path, token=token)
 
             def graphql(query, variables):
                 out = call("POST", "/graphql", {"query": query, "variables": variables})
@@ -111,8 +115,12 @@ jobs:
                 m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
                 if not m:
                     return False
-                this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)))
-                runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]))["workflow_runs"]
+                try:
+                    this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)), "READ_TOKEN")
+                    runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]), "READ_TOKEN")["workflow_runs"]
+                except RuntimeError as e:
+                    print("runs unreadable, main is not assumed green: %s" % e, file=sys.stderr)
+                    return False
                 return any(r["conclusion"] == "success" and r["created_at"] > this["created_at"] for r in runs)
 
             def gather(repo, sha, run_url=""):
@@ -174,6 +182,22 @@ jobs:
                 print("revert PR #%d, auto-merge on" % new["number"])
                 return 0
 
+            def main(env):
+                try:
+                    return run(env)
+                except Exception as e:
+                    print("the decision failed: %s" % e, file=sys.stderr)
+                    if env.get("DRY_RUN") == "true":
+                        return 1
+                    try:
+                        call("POST", "/repos/%s/labels" % env["REPO"], {"name": "main-red", "color": "b60205"})
+                    except Exception:
+                        pass
+                    call("POST", "/repos/%s/issues" % env["REPO"], {"title": "main is red: %s" % env["SHA"][:12], "labels": ["main-red"], "assignees": [env["ASSIGNEE"]], "body": "\n".join([
+                        "The required job(s) %s failed on %s on main: %s" % (env["FAILED"], env["SHA"], env["RUN_URL"]),
+                        "", "No automatic revert: the decision itself failed (%s). A human looks." % e])})
+                    return 1
+
             if __name__ == "__main__":
-                sys.exit(run(os.environ))
+                sys.exit(main(os.environ))
         run: python3 -I -c "$SCRIPT"
