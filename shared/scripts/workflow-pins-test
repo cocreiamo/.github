@@ -61,7 +61,7 @@ caller() { # caller <name> <sha> <with-lines> <secrets-lines>: a repository whos
 }
 run() { WORKFLOW_PINS_OFFLINE=1 WORKFLOW_PINS_CACHE="$tmp/cache" "$check" "$tmp/r" > "$tmp/out" 2>&1; }
 good_with=$'      failed: build\n      app-id: "1"'
-good_secrets='      app-private-key: ${{ secrets.K }}'
+good_secrets="      app-private-key: \${{ secrets.K }}"
 
 caller ok "$old" "$good_with" "$good_secrets"
 run || { cat "$tmp/out" >&2; fail "refused a caller that matches the workflow at its pin"; }
@@ -72,7 +72,9 @@ run || { cat "$tmp/out" >&2; fail "refused secrets: inherit"; }
 
 caller unknown "$old" $'      failed: build\n      app-id: "1"\n      title-prefix: "drill: "' "$good_secrets"
 if run; then fail "accepted an input the workflow does not declare at its pin"; fi
-grep -q 'title-prefix' "$tmp/out" && grep -q 'post' "$tmp/out" && grep -q 'unknown.yml' "$tmp/out" || { cat "$tmp/out" >&2; fail "an unknown input is refused without naming the file, the job and the input"; }
+for word in title-prefix post unknown.yml; do
+  grep -q "$word" "$tmp/out" || { cat "$tmp/out" >&2; fail "an unknown input is refused without naming the file, the job and the input ($word)"; }
+done
 
 caller unknown "$new" $'      failed: build\n      app-id: "1"\n      title-prefix: "drill: "\n      label: drill' "$good_secrets"
 run || { cat "$tmp/out" >&2; fail "refused the inputs of a pin that declares them"; }
