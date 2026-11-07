@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Wait for a PR's required checks (or --run <id>) at 60 s polls, through a GitHub rate limit: mise run pr:wait [<pr>|--run <id>]"
 # Every agent shares one user token of 5000 REST requests an hour: gh's own defaults (10 s for pr checks, 3 s for run watch)
-# exhaust it with a few waits at once. Exit 0 the PR is merged (a required check that has not reported yet makes gh exit 0 early, so green alone is not enough), 1 a check failed or the PR closed, 75 still pending after PR_WAIT_BUDGET seconds (540):
+# exhaust it with a few waits at once. Exit 0 the PR is merged (a required check that has not reported yet makes gh exit 0 early, so green alone is not enough), 1 a check failed or the PR closed (checks GitHub has not registered yet are pending), 75 still pending after PR_WAIT_BUDGET seconds (540):
 # repeat the same command in the foreground. A rate-limit answer is slept through until the reset gh api rate_limit reports.
 set -euo pipefail
 
@@ -28,6 +28,13 @@ while :; do
   set -e
   [ "$rc" != 124 ] || exit 75
   if [ "$rc" = 0 ] && [ "${cmd[1]}" = pr ]; then
+    state="$(gh pr view "$@" --json state --jq .state 2>/dev/null || echo OPEN)"
+    [ "$state" != MERGED ] || exit 0
+    [ "$state" != CLOSED ] || { echo "the PR is closed, not merged" >&2; exit 1; }
+    sleep "$interval"
+    continue
+  fi
+  if [ "$rc" != 0 ] && [ "${cmd[1]}" = pr ] && grep -qi 'no checks reported' "$out"; then
     state="$(gh pr view "$@" --json state --jq .state 2>/dev/null || echo OPEN)"
     [ "$state" != MERGED ] || exit 0
     [ "$state" != CLOSED ] || { echo "the PR is closed, not merged" >&2; exit 1; }
