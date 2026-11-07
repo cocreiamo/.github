@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mise run pr:wait (shared/scripts/pr-wait.sh, or its vendored copy named in .github/shared-scripts) against a fake gh: the interval is never under 60 s, a rate-limit answer is slept through until the reset
-# (never a failure), a real failure keeps its exit code, and a wait that outlasts the budget exits 75.
+# (never a failure), a real failure keeps its exit code, and a wait that outlasts the budget exits 75, and a PR whose checks are not registered yet is waited for.
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 wait_task="$repo/shared/scripts/pr-wait.sh"
@@ -20,6 +20,7 @@ if [ "$1 $2" = "pr view" ]; then
 fi
 n="$(grep -c -E '^gh (pr checks|run watch)' "$FAKE_LOG")"
 if [ "$n" -le "${LIMITED_CALLS:-0}" ]; then echo "HTTP 403: API rate limit exceeded for user ID 1 (https://api.github.com/graphql)"; exit 1; fi
+if [ "$n" -le "${NO_CHECKS_CALLS:-0}" ]; then echo "no checks reported on the 'feat/x' branch"; exit 1; fi
 if [ -n "${FAIL_TEXT:-}" ]; then echo "$FAIL_TEXT"; exit 1; fi
 echo "all checks were successful"
 FAKE
@@ -61,6 +62,13 @@ slept="$(sed -n 's/^sleep //p' <<< "$log" | head -n 1)"
 name=early; run early OPEN_VIEWS=1 --
 [ "$rc" = 0 ] || fail "green checks on an open PR keep waiting until the merge, got $rc"
 [ "$(grep -c '^gh pr checks' <<< "$log")" = 2 ] || fail "an open PR after green checks is watched again"
+
+name=nochecks; run nochecks NO_CHECKS_CALLS=1 OPEN_VIEWS=1 --
+[ "$rc" = 0 ] || fail "no checks reported yet on an open PR is pending, not a failure; got $rc"
+[ "$(grep -c '^gh pr checks' <<< "$log")" = 2 ] || fail "the watch is repeated after no checks were reported"
+
+name=nochecksclosed; run nochecksclosed NO_CHECKS_CALLS=1 FINAL_STATE=CLOSED --
+[ "$rc" = 1 ] || fail "no checks reported on a closed PR exits 1, got $rc"
 
 name=closed; run closed FINAL_STATE=CLOSED --
 [ "$rc" = 1 ] || fail "a PR closed unmerged exits 1, got $rc"
