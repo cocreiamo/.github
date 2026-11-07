@@ -1,0 +1,7 @@
+id: dotgithub/test/post-merge-skip.sh
+repo: dotgithub
+invariant: 'The post-merge skip decision (shared/scripts/post_merge_skip.py): skip only when the merged tree is the tree of the pull request head whose required check was green; any doubt runs the checks.'
+runs:
+- pr-ci
+command: bash tests/post-merge-skip.sh
+file: tests/post-merge-skip.sh

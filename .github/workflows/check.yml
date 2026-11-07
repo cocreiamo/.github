@@ -39,5 +39,6 @@ jobs:
       - run: bash tests/post-merge-skip.sh
       - run: bash tests/worktrees.sh
       - run: bash tests/pr-wait.sh
+      - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/sync-founder-section.sh
