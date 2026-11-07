@@ -1,0 +1,79 @@
+# Reusable, called by alert-drill.yml after each alert: reads the drill issue back through the API and checks the marker and
+# the run link in the issue body (expect=created) or in its last comment (expect=commented); after the second check it
+# comments «drill passed» and closes the issue.
+name: alert-drill-verify
+on:
+  workflow_call:
+    inputs:
+      expect:
+        type: string
+        required: true
+      app-id:
+        type: string
+        required: true
+    secrets:
+      app-private-key:
+        required: true
+permissions: {}
+jobs:
+  verify:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+      - name: verify
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          READ_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EXPECT: ${{ inputs.expect }}
+          SCRIPT: |
+            import json, os, sys, urllib.request
+
+            def call(method, path, body=None, token="GH_TOKEN"):
+                req = urllib.request.Request("https://api.github.com" + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ[token], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    raw = r.read()
+                return json.loads(raw) if raw else None
+
+            def need(ok, what):
+                if not ok:
+                    sys.exit("DRILL FAILED: " + what)
+
+            env = os.environ
+            repo, run_id, run_url, expect = env["REPO"], env["RUN_ID"], env["RUN_URL"], env["EXPECT"]
+            jobs = call("GET", "/repos/%s/actions/runs/%s/jobs?per_page=100" % (repo, run_id), token="READ_TOKEN")["jobs"]
+            need([j["conclusion"] for j in jobs if j["name"] == "drill-fail"] == ["failure"], "the deliberate job did not fail")
+            marker = "alert-drill marker " + run_id
+            marker_tag = "<!-- post-merge-alert:drill-fail -->"
+            issues = [i for i in call("GET", "/repos/%s/issues?state=open&labels=drill&per_page=100" % repo) if marker_tag in (i.get("body") or "")]
+            need(len(issues) == 1, "expected exactly one open drill issue, found %d" % len(issues))
+            issue = issues[0]
+            need(issue["title"] == "drill: drill-fail failed", "title is " + issue["title"])
+            need([a["login"] for a in issue["assignees"]] == ["iambilotta"], "assignee is not iambilotta")
+            comments = call("GET", "/repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
+            if expect == "created":
+                text = issue["body"]
+                need(not comments, "a fresh issue already has comments")
+            else:
+                need(comments, "no comment was added to the open issue")
+                text = comments[-1]["body"]
+            need(marker in text, "the marker line is missing from the %s text" % expect)
+            need(run_url in text, "the run link is missing from the %s text" % expect)
+            print("issue #%d %s: marker and run link found" % (issue["number"], expect))
+            if expect == "commented":
+                call("POST", "/repos/%s/issues/%d/comments" % (repo, issue["number"]), {"body": "drill passed"})
+                call("PATCH", "/repos/%s/issues/%d" % (repo, issue["number"]), {"state": "closed", "state_reason": "completed"})
+                print("closed #%d" % issue["number"])
+        run: python3 -I -c "$SCRIPT"
