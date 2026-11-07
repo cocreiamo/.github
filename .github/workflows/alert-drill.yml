@@ -3,7 +3,8 @@
 # comment on the same issue, the verification reads the comment, comments «drill passed» and closes the issue. The deliberate
 # failure is continue-on-error, so a green drill run means the alert path works. Dispatch with expect=created or
 # expect=commented runs one half only (commented needs the issue left open by created). A red scheduled drill raises
-# «main is red: <job> failed» through the real alert, because nobody watches a scheduled run.
+# «main is red: <job> failed» through the real alert, because nobody watches a scheduled run. The first job closes the open
+# issues labelled drill that an earlier failed drill left (never a main-red one, never a deletion), so the drill heals itself.
 name: alert-drill
 on:
   schedule:
@@ -26,9 +27,49 @@ jobs:
       - run: |
           echo "Error: alert-drill marker ${GITHUB_RUN_ID}"
           exit 1
+  clean-stale:
+    if: ${{ github.event_name == 'schedule' || inputs.expect != 'commented' }}
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+      - name: clean
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SCRIPT: |
+            import json, os, urllib.request
+
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            def call(method, path, body=None):
+                req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    raw = r.read()
+                return json.loads(raw) if raw else None
+
+            repo, run_url = os.environ["REPO"], os.environ["RUN_URL"]
+            for issue in call("GET", "/repos/%s/issues?state=open&labels=drill&per_page=100" % repo):
+                names = [l["name"] for l in issue["labels"]]
+                if "pull_request" in issue or "drill" not in names or "main-red" in names:
+                    continue
+                n = issue["number"]
+                call("POST", "/repos/%s/issues/%d/comments" % (repo, n), {"body": "closed by the next drill run " + run_url})
+                call("PATCH", "/repos/%s/issues/%d" % (repo, n), {"state": "closed", "state_reason": "not_planned"})
+                print("closed stale drill issue #%d" % n)
+        run: python3 -I -c "$SCRIPT"
   alert-created:
-    needs: [drill-fail]
-    if: ${{ always() && (github.event_name == 'schedule' || inputs.expect != 'commented') }}
+    needs: [drill-fail, clean-stale]
+    if: ${{ always() && needs.clean-stale.result != 'failure' && (github.event_name == 'schedule' || inputs.expect != 'commented') }}
     permissions:
       actions: read
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
@@ -75,13 +116,13 @@ jobs:
     secrets:
       app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
   drill-red:
-    needs: [drill-fail, alert-created, verify-created, alert-commented, verify-commented]
+    needs: [drill-fail, clean-stale, alert-created, verify-created, alert-commented, verify-commented]
     if: ${{ always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure') }}
     permissions:
       actions: read
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
     with:
-      failed: ${{ needs.alert-created.result == 'failure' && 'alert-created' || '' }} ${{ needs.verify-created.result == 'failure' && 'verify-created' || '' }} ${{ needs.alert-commented.result == 'failure' && 'alert-commented' || '' }} ${{ needs.verify-commented.result == 'failure' && 'verify-commented' || '' }}
+      failed: ${{ needs.clean-stale.result == 'failure' && 'clean-stale' || '' }} ${{ needs.alert-created.result == 'failure' && 'alert-created' || '' }} ${{ needs.verify-created.result == 'failure' && 'verify-created' || '' }} ${{ needs.alert-commented.result == 'failure' && 'alert-commented' || '' }} ${{ needs.verify-commented.result == 'failure' && 'verify-commented' || '' }}
       app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
     secrets:
       app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}

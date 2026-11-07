@@ -26,5 +26,16 @@ yq -e '(.jobs."alert-created".needs | contains(["drill-fail"])) and (.jobs."aler
 yq -e '.jobs."drill-red".uses | test("post-merge-alert.yml$")' "$drill" >/dev/null || fail "a red scheduled drill must reach the founder through post-merge-alert.yml"
 yq -e '(.jobs."drill-red".with | has("title-prefix") | not) and (.jobs."drill-red".if | test("schedule.*failure"))' "$drill" >/dev/null || fail "the red-drill alert keeps the default main is red prefix and runs on a failed scheduled drill"
 yq -e '.jobs."drill-fail"."continue-on-error" == true' "$drill" >/dev/null || fail "the drill run must end green: its deliberate failure is continue-on-error"
+drill_cleans() {
+  yq -e '(.jobs."clean-stale".steps[] | select(.name == "clean") | .env.SCRIPT | length) > 0
+    and (.jobs."alert-created".needs | contains(["clean-stale"]))
+    and (.jobs."clean-stale"."if" | (test("schedule") and test("commented")))
+    and (.jobs."clean-stale".steps[0].with."permission-issues" == "write")' "$1" >/dev/null 2>&1
+}
+drill_cleans "$drill" || fail "the drill must close the open drill issues of an earlier run before it starts (job clean-stale, before alert-created, not in expect=commented)"
+yq '.jobs."alert-created".needs = ["drill-fail"] | del(.jobs."clean-stale")' "$drill" > "$tmp/no-clean.yml"
+if drill_cleans "$tmp/no-clean.yml"; then fail "a drill with no stale-issue cleanup must be refused"; fi
+yq -N '.jobs."clean-stale".steps[] | select(.name == "clean") | .env.SCRIPT' "$drill" > "$tmp/clean.py"
+python3 -I tests/alert_drill_clean_test.py "$tmp/clean.py"
 python3 -I tests/post_merge_alert_test.py "$tmp/script.py"
 echo "post-merge-alert ok"
