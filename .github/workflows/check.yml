@@ -25,6 +25,9 @@ jobs:
       - run: ci-mise-setup
       - run: actionlint -shellcheck="$(mise which shellcheck)"
       - run: zizmor --offline --min-severity low .github/workflows
+      - run: shared/scripts/workflow-pins-check.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: hooks/check-conflict-markers
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
@@ -39,6 +42,7 @@ jobs:
       - run: bash tests/post-merge-skip.sh
       - run: bash tests/worktrees.sh
       - run: bash tests/pr-wait.sh
+      - run: bash tests/workflow-pins.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/sync-founder-section.sh

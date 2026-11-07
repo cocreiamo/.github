@@ -59,7 +59,7 @@ caller() { # caller <name> <sha> <with-lines> <secrets-lines>: a repository whos
     [ -z "$4" ] || printf '    secrets:\n%s\n' "$4"
   } > "$tmp/r/.github/workflows/$1.yml"
 }
-run() { WORKFLOW_PINS_CACHE="$tmp/cache" "$check" "$tmp/r" > "$tmp/out" 2>&1; }
+run() { WORKFLOW_PINS_OFFLINE=1 WORKFLOW_PINS_CACHE="$tmp/cache" "$check" "$tmp/r" > "$tmp/out" 2>&1; }
 good_with=$'      failed: build\n      app-id: "1"'
 good_secrets='      app-private-key: ${{ secrets.K }}'
 
@@ -130,6 +130,6 @@ jobs:
     secrets:
       app-private-key: ${{ secrets.K }}
 YAML
-if WORKFLOW_PINS_CACHE="$tmp/real" "$check" "$tmp/r" > "$tmp/out" 2>&1; then fail "accepted the caller that failed at startup on main"; fi
+if WORKFLOW_PINS_OFFLINE=1 WORKFLOW_PINS_CACHE="$tmp/real" "$check" "$tmp/r" > "$tmp/out" 2>&1; then fail "accepted the caller that failed at startup on main"; fi
 grep -q 'title-prefix' "$tmp/out" || { cat "$tmp/out" >&2; fail "the startup failure of main is refused without the input"; }
 echo "a caller whose with: or secrets: do not match the workflow at its pin is refused"
