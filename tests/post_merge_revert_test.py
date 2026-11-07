@@ -9,7 +9,7 @@ PR = {"number": 12, "title": "feat: add x", "head_ref": "add-x", "author": "iamb
 
 
 def facts(**kw):
-    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False}
+    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False, "green_after": False}
     f.update(kw)
     return f
 
@@ -28,6 +28,8 @@ check("main moved on: skip", action(head_sha=OTHER), "skip")
 check("main moved on but the caller judges a commit that is no longer the head: revert", action(head_sha=OTHER, moved_ok=True), "revert")
 check("moved_ok never reverts a revert", action(head_sha=OTHER, moved_ok=True, commit_title="revert: feat: add x (#13)"), "alert")
 check("moved_ok still skips a revert already open", action(head_sha=OTHER, moved_ok=True, open_revert=True), "skip")
+check("main is green again after the commit: skip", action(green_after=True), "skip")
+check("green again wins over a revert-worthy PR even when main moved", action(green_after=True, head_sha=OTHER, moved_ok=True), "skip")
 check("a revert PR already open: skip", action(open_revert=True), "skip")
 check("main moved on wins over everything", action(head_sha=OTHER, pr=None), "skip")
 check("never revert a revert (commit title)", action(commit_title="revert: feat: add x (#13)"), "alert")
@@ -59,6 +61,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         p = self.path
         if p.endswith("/git/ref/heads/main"):
             self.reply(200, {"object": {"sha": SC["head"]}})
+        elif p.endswith("/actions/runs/1"):
+            self.reply(200, {"workflow_id": 5, "created_at": "2026-01-02T00:00:00Z"})
+        elif "/actions/workflows/5/runs" in p:
+            self.reply(200, {"workflow_runs": SC["runs"]})
         elif p.endswith("/pulls") and "/commits/" in p:
             self.reply(200, [{"number": 12, "title": "feat: add x", "merged_at": "t", "merge_commit_sha": SHA, "node_id": "PR_node",
                               "head": {"ref": SC["ref"]}, "user": {"login": SC["author"]}}] if SC["pr"] else [])
@@ -91,7 +97,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 def run(dry=False, **kw):
     SC.clear()
-    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False})
+    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": []})
     SC.update(kw)
     del LOG[:]
     env = {
@@ -127,6 +133,15 @@ if "would revert" not in r.stdout:
 r, calls = run(head=OTHER)
 check("main moved on: succeeds", r.returncode, 0)
 check("main moved on: nothing mutated", mutating(calls), [])
+
+OLD_OK = {"created_at": "2026-01-01T00:00:00Z", "conclusion": "success", "head_sha": OTHER}
+NEW_OK = {"created_at": "2026-01-03T00:00:00Z", "conclusion": "success", "head_sha": OTHER}
+NEW_RED = {"created_at": "2026-01-03T00:00:00Z", "conclusion": "failure", "head_sha": OTHER}
+r, calls = run(runs=[NEW_OK])
+check("main is green again: succeeds", r.returncode, 0)
+check("main is green again: nothing mutated", mutating(calls), [])
+r, calls = run(runs=[OLD_OK, NEW_RED])
+check("a green run before the commit and a red one after it: reverted", "revertPullRequest" in json.dumps(calls), True)
 
 r, calls = run(open=True)
 check("revert already open: nothing mutated", mutating(calls), [])

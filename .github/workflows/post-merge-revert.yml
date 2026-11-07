@@ -10,7 +10,7 @@
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
 # No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
 # revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past (unless the caller passes moved-ok), a commit whose
-# revert is already open; the first three still raise the alert. dry-run does everything except write.
+# revert is already open, a commit after which a later run of the same workflow on main succeeded (main is green again); the first three still raise the alert. dry-run does everything except write.
 name: post-merge-revert
 on:
   workflow_call:
@@ -66,7 +66,7 @@ jobs:
           MOVED_OK: ${{ inputs.moved-ok }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
-            import json, os, sys, urllib.error, urllib.request
+            import json, os, re, sys, urllib.error, urllib.request
 
             API = os.environ.get("API_URL", "https://api.github.com")
 
@@ -90,6 +90,8 @@ jobs:
                 return out["data"]
 
             def decide(f):
+                if f.get("green_after"):
+                    return {"action": "skip", "reason": "main is green again: a later run of the same workflow succeeded after this commit"}
                 if f["head_sha"] != f["sha"] and not f["moved_ok"]:
                     return {"action": "skip", "reason": "main has moved on: the run of the newer commit decides"}
                 if f["open_revert"]:
@@ -104,7 +106,16 @@ jobs:
                     return {"action": "alert", "reason": "a bot PR is never reverted automatically"}
                 return {"action": "revert", "reason": "the merge commit is the head of main and its PR is a human one"}
 
-            def gather(repo, sha):
+            def green_after(repo, run_url):
+                # A later green run on main means the red was fixed or transient: a revert now would undo good work.
+                m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
+                if not m:
+                    return False
+                this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)))
+                runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]))["workflow_runs"]
+                return any(r["conclusion"] == "success" and r["created_at"] > this["created_at"] for r in runs)
+
+            def gather(repo, sha, run_url=""):
                 head = api("/repos/%s/git/ref/heads/main" % repo)["object"]["sha"]
                 title = api("/repos/%s/commits/%s" % (repo, sha))["commit"]["message"].split("\n")[0]
                 merged = [p for p in api("/repos/%s/commits/%s/pulls" % (repo, sha)) if p.get("merged_at") and p.get("merge_commit_sha") == sha]
@@ -114,11 +125,12 @@ jobs:
                     pr = {"number": p["number"], "title": p["title"], "head_ref": p["head"]["ref"], "author": p["user"]["login"], "node_id": p["node_id"]}
                 marker = "<!-- post-merge-revert:%s -->" % sha
                 opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
-                return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened)}
+                return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened),
+                        "green_after": green_after(repo, run_url)}
 
             def run(env):
                 repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
-                f = gather(repo, sha)
+                f = gather(repo, sha, env.get("RUN_URL", ""))
                 d = decide(f)
                 print("commit %s (%s): %s: %s" % (sha[:12], f["commit_title"], d["action"], d["reason"]))
                 if d["action"] == "skip":
