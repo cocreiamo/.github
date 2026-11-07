@@ -1,0 +1,98 @@
+# Drill of post-merge-alert.yml on a real run: one job fails on purpose, the alert opens (first dispatch, expect=created)
+# or comments on (second dispatch, expect=commented) an issue labelled drill, and the verification reads it back through
+# the API; after the second check the issue is closed with «drill passed». Dispatch twice: expect=created, expect=commented.
+name: alert-drill
+on:
+  workflow_dispatch:
+    inputs:
+      expect:
+        description: created on the first dispatch, commented on the second
+        type: choice
+        options: [created, commented]
+        required: true
+permissions: {}
+jobs:
+  drill-fail:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: |
+          echo "Error: alert-drill marker ${GITHUB_RUN_ID}"
+          exit 1
+  alert:
+    needs: [drill-fail]
+    if: ${{ always() && needs.drill-fail.result == 'failure' }}
+    permissions:
+      actions: read
+    uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
+    with:
+      failed: drill-fail
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+      title-prefix: "drill: "
+      label: drill
+    secrets:
+      app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
+  verify:
+    needs: [drill-fail, alert]
+    if: ${{ always() }}
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+      - name: verify
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EXPECT: ${{ inputs.expect }}
+          FAIL_RESULT: ${{ needs.drill-fail.result }}
+          ALERT_RESULT: ${{ needs.alert.result }}
+          SCRIPT: |
+            import json, os, sys, urllib.request
+
+            def call(method, path, body=None):
+                req = urllib.request.Request("https://api.github.com" + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    raw = r.read()
+                return json.loads(raw) if raw else None
+
+            def need(ok, what):
+                if not ok:
+                    sys.exit("DRILL FAILED: " + what)
+
+            env = os.environ
+            repo, run_id, run_url, expect = env["REPO"], env["RUN_ID"], env["RUN_URL"], env["EXPECT"]
+            need(env["FAIL_RESULT"] == "failure", "the deliberate job did not fail: " + env["FAIL_RESULT"])
+            need(env["ALERT_RESULT"] == "success", "the alert job did not succeed: " + env["ALERT_RESULT"])
+            marker = "alert-drill marker " + run_id
+            marker_tag = "<!-- post-merge-alert:drill-fail -->"
+            issues = [i for i in call("GET", "/repos/%s/issues?state=open&labels=drill&per_page=100" % repo) if marker_tag in (i.get("body") or "")]
+            need(len(issues) == 1, "expected exactly one open drill issue, found %d" % len(issues))
+            issue = issues[0]
+            need(issue["title"] == "drill: drill-fail failed", "title is " + issue["title"])
+            need([a["login"] for a in issue["assignees"]] == ["iambilotta"], "assignee is not iambilotta")
+            comments = call("GET", "/repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
+            if expect == "created":
+                text = issue["body"]
+                need(not comments, "a fresh issue already has comments")
+            else:
+                need(comments, "no comment was added to the open issue")
+                text = comments[-1]["body"]
+            need(marker in text, "the marker line is missing from the %s text" % expect)
+            need(run_url in text, "the run link is missing from the %s text" % expect)
+            print("issue #%d %s: marker and run link found" % (issue["number"], expect))
+            if expect == "commented":
+                call("POST", "/repos/%s/issues/%d/comments" % (repo, issue["number"]), {"body": "drill passed"})
+                call("PATCH", "/repos/%s/issues/%d" % (repo, issue["number"]), {"state": "closed", "state_reason": "completed"})
+                print("closed #%d" % issue["number"])
+        run: python3 -I -c "$SCRIPT"

@@ -56,7 +56,7 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
-def run(dry=False, failed="publish", **kw):
+def run(dry=False, failed="publish", prefix="main is red: ", label="main-red", **kw):
     SC.clear()
     SC.update({"open": False, "logs_fail": False})
     SC.update(kw)
@@ -64,7 +64,7 @@ def run(dry=False, failed="publish", **kw):
     env = {
         "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "app", "READ_TOKEN": "read", "REPO": "cocreiamo/x",
         "SHA": SHA, "FAILED": failed, "RUN_ID": "1", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
-        "DRY_RUN": "true" if dry else "false",
+        "DRY_RUN": "true" if dry else "false", "TITLE_PREFIX": prefix, "LABEL": label,
     }
     r = subprocess.run([sys.executable, "-I", sys.argv[1]], env=env, capture_output=True, text=True)
     return r, list(LOG)
@@ -109,6 +109,14 @@ r, calls = run(failed="publish other", open=True)
 check("two failed jobs: success", r.returncode, 0)
 check("two failed jobs: one comment on each open issue", sorted(c[1] for c in mutating(calls)),
       ["/repos/cocreiamo/x/issues/40/comments", "/repos/cocreiamo/x/issues/41/comments"])
+
+r, calls = run(prefix="drill: ", label="drill")
+check("a drill alert succeeds", r.returncode, 0)
+issue = next(c[2] for c in mutating(calls) if c[1].endswith("/issues"))
+check("a drill issue title", issue["title"], "drill: publish failed")
+check("a drill issue label", issue["labels"], ["drill"])
+if not any("labels=drill" in c[1] for c in calls if c[0] == "GET"):
+    sys.exit("FAIL: a drill looks for open issues by its own label")
 
 r, calls = run(dry=True)
 check("a dry run succeeds", r.returncode, 0)
