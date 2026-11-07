@@ -16,9 +16,15 @@ yq -e '(.jobs.alert.permissions | keys | join(",")) == "actions" and .jobs.alert
 if grep -q 'revertPullRequest' "$wf"; then fail "an alert-only workflow never reverts"; fi
 drill=.github/workflows/alert-drill.yml
 [ -f "$drill" ] || fail "$drill is missing"
-yq -e '(.on | keys | join(",")) == "workflow_dispatch"' "$drill" >/dev/null || fail "the drill runs on workflow_dispatch only"
-yq -e '[.jobs[] | select(has("steps")) | .steps[] | select(has("uses")) | .uses | test("@[0-9a-f]{40}$")] | all' "$drill" >/dev/null || fail "every action of the drill must be pinned by commit"
-yq -e '.jobs.alert.with."title-prefix" == "drill: " and .jobs.alert.with.label == "drill"' "$drill" >/dev/null || fail "the drill must not use the title or the label of a red main"
+verify=.github/workflows/alert-drill-verify.yml
+[ -f "$verify" ] || fail "$verify is missing"
+yq -e '(.on | keys | join(",")) == "schedule,workflow_dispatch" and (.on.schedule | length) == 1 and (.on.schedule[0].cron | test("^[0-9]+ [0-9]+ [0-9]+ \* \*$"))' "$drill" >/dev/null \
+  || fail "the drill must run on its own every month (schedule with a monthly cron) and stay dispatchable"
+yq -e '[.jobs[] | select(has("steps")) | .steps[] | select(has("uses")) | .uses | test("@[0-9a-f]{40}$")] | all' "$drill" "$verify" >/dev/null || fail "every action of the drill must be pinned by commit"
+yq -e '.jobs."alert-created".with."title-prefix" == "drill: " and .jobs."alert-created".with.label == "drill" and .jobs."alert-commented".with."title-prefix" == "drill: " and .jobs."alert-commented".with.label == "drill"' "$drill" >/dev/null || fail "the drill must not use the title or the label of a red main"
+yq -e '(.jobs."alert-created".needs | contains(["drill-fail"])) and (.jobs."alert-commented".needs | contains(["verify-created"])) and (.jobs."verify-commented".needs | contains(["alert-commented"]))' "$drill" >/dev/null || fail "the drill must run created, verify, commented, verify in sequence in one run"
+yq -e '.jobs."drill-red".uses | test("post-merge-alert.yml$")' "$drill" >/dev/null || fail "a red scheduled drill must reach the founder through post-merge-alert.yml"
+yq -e '(.jobs."drill-red".with | has("title-prefix") | not) and (.jobs."drill-red".if | test("schedule.*failure"))' "$drill" >/dev/null || fail "the red-drill alert keeps the default main is red prefix and runs on a failed scheduled drill"
 yq -e '.jobs."drill-fail"."continue-on-error" == true' "$drill" >/dev/null || fail "the drill run must end green: its deliberate failure is continue-on-error"
 python3 -I tests/post_merge_alert_test.py "$tmp/script.py"
 echo "post-merge-alert ok"
