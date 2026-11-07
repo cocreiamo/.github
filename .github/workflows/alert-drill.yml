@@ -1,6 +1,6 @@
 # Drill of post-merge-alert.yml on a real run: one job fails on purpose, the alert opens (first dispatch, expect=created)
 # or comments on (second dispatch, expect=commented) an issue labelled drill, and the verification reads it back through
-# the API; after the second check the issue is closed with «drill passed». Dispatch twice: expect=created, expect=commented.
+# the API (the deliberate failure is continue-on-error, so the drill run itself is green); after the second check the issue is closed with «drill passed». Dispatch twice: expect=created, expect=commented.
 name: alert-drill
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ jobs:
   drill-fail:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 5
+    continue-on-error: true
     permissions: {}
     steps:
       - run: |
@@ -22,7 +23,7 @@ jobs:
           exit 1
   alert:
     needs: [drill-fail]
-    if: ${{ always() && needs.drill-fail.result == 'failure' }}
+    if: ${{ always() }}
     permissions:
       actions: read
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
@@ -38,7 +39,8 @@ jobs:
     if: ${{ always() }}
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      actions: read
     steps:
       - id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -50,18 +52,18 @@ jobs:
       - name: verify
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          READ_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXPECT: ${{ inputs.expect }}
-          FAIL_RESULT: ${{ needs.drill-fail.result }}
           ALERT_RESULT: ${{ needs.alert.result }}
           SCRIPT: |
             import json, os, sys, urllib.request
 
-            def call(method, path, body=None):
+            def call(method, path, body=None, token="GH_TOKEN"):
                 req = urllib.request.Request("https://api.github.com" + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
-                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                    "Authorization": "Bearer " + os.environ[token], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=30) as r:
                     raw = r.read()
                 return json.loads(raw) if raw else None
@@ -72,7 +74,8 @@ jobs:
 
             env = os.environ
             repo, run_id, run_url, expect = env["REPO"], env["RUN_ID"], env["RUN_URL"], env["EXPECT"]
-            need(env["FAIL_RESULT"] == "failure", "the deliberate job did not fail: " + env["FAIL_RESULT"])
+            jobs = call("GET", "/repos/%s/actions/runs/%s/jobs?per_page=100" % (repo, run_id), token="READ_TOKEN")["jobs"]
+            need([j["conclusion"] for j in jobs if j["name"] == "drill-fail"] == ["failure"], "the deliberate job did not fail")
             need(env["ALERT_RESULT"] == "success", "the alert job did not succeed: " + env["ALERT_RESULT"])
             marker = "alert-drill marker " + run_id
             marker_tag = "<!-- post-merge-alert:drill-fail -->"
