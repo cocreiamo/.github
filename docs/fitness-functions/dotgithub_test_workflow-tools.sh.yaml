@@ -1,0 +1,7 @@
+id: dotgithub/test/workflow-tools.sh
+repo: dotgithub
+invariant: 'Every run step of a workflow calls only tools its runner image has or an earlier step of the job installs from mise.toml (ci-mise-setup, mise install, mise x, a setup action); the check is proven red on gh with no setup, gh before the setup, a tool mise.toml does not pin and the matrix-pr job that failed with exit 127 on main.'
+runs:
+- pr-ci
+command: bash tests/workflow-tools.sh
+file: tests/workflow-tools.sh

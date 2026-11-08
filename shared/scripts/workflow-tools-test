@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# workflow-tools-check.py (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture workflows: a run
+# step that calls a tool the runner image lacks is refused when nothing installs it (the three failures of main: gh in a
+# publish, in the auto-merge workflows and in a capabilities job) and accepted after ci-mise-setup, mise install or mise x with
+# the tool pinned in mise.toml, after a setup action, or behind command -v; a pinned tool still needs the setup step.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/workflow-tools-check.py"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "workflow-tools-check.py" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# fixture <name> <mise-tools-toml> <job yaml (steps indented by 6)>: a repository with one workflow
+fixture() {
+  rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+  printf '[tools]\n%s\n' "$2" > "$tmp/r/mise.toml"
+  printf 'name: x\non: push\njobs:\n  j:\n    runs-on: [self-hosted, cocreiamo-ci]\n    steps:\n%s\n' "$3" > "$tmp/r/.github/workflows/$1.yml"
+}
+refused() { # <what> <command named in the refusal>
+  if "$check" "$tmp/r" > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted $1"; fi
+  grep -qF "calls \`$2\`" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $1 without naming \`$2\`"; }
+  grep -q 'job [a-z-]*, step [0-9]' "$tmp/out" || fail "the refusal of $1 does not name the job and step"
+}
+accepted() { "$check" "$tmp/r" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+GH='gh = "2.0.0"'
+MERGE='      - name: merge
+        run: gh pr merge "$PR" --auto --squash'
+SETUP='      - run: ci-mise-setup'
+
+fixture merge "$GH" "$MERGE"
+refused "gh pr merge with no setup step, though mise.toml pins gh" gh
+fixture merge "" "$MERGE"
+refused "gh pr merge when mise.toml does not pin gh" gh
+fixture merge "$GH" "$SETUP
+$MERGE"
+accepted "gh after ci-mise-setup with gh pinned"
+fixture merge "" "$SETUP
+$MERGE"
+refused "gh after ci-mise-setup when mise.toml does not pin it" gh
+fixture merge "$GH" "$MERGE
+$SETUP"
+refused "gh before the setup step" gh
+fixture merge "$GH" "      - run: |
+          mise install
+          gh pr list"
+accepted "gh after mise install in the same step"
+fixture merge "$GH" "      - run: |
+          gh pr list
+          mise install"
+refused "gh before mise install in the same step" gh
+fixture merge "$GH" "      - run: mise x -- true
+      - run: gh pr list"
+accepted "gh after mise x"
+fixture merge "$GH" "      - uses: jdx/mise-action@v2
+      - run: gh pr list"
+accepted "gh after the mise setup action"
+fixture merge "$GH" "      - uses: actions/checkout@v4
+      - run: gh pr list"
+refused "a checkout, which installs nothing" gh
+fixture merge "" "      - uses: actions/setup-node@v4
+      - run: node --version"
+accepted "node after actions/setup-node"
+fixture merge "" "      - run: node --version"
+refused "node with no setup" node
+fixture merge "$GH" "      - run: |
+          if command -v gh > /dev/null; then gh pr list; fi"
+accepted "gh only behind command -v"
+fixture merge "$GH" "      - run: git status | grep -c x | frobnicate"
+refused "an unknown tool at the end of a pipeline" frobnicate
+fixture merge "$GH" "      - run: echo \${{ github.event.number }} \${{ secrets.X }}
+      - uses: ./.github/actions/anything
+      - shell: python3 {0}
+        run: |
+          gh = 1
+      - run: 'true'"
+accepted "expressions, a local action, a python step and a platform tool"
+fixture merge "$GH" "      - run: gh pr list
+        shell: pwsh"
+accepted "a step with another shell, which is not read"
+rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+printf '[tools]\ngh = "2"\n' > "$tmp/r/mise.toml"
+cat > "$tmp/r/.github/workflows/c.yml" <<'YAML'
+name: x
+on: push
+jobs:
+  a:
+    runs-on: [self-hosted, cocreiamo-ci]
+    steps:
+      - run: ci-mise-setup
+  b:
+    runs-on: [self-hosted, cocreiamo-ci]
+    steps:
+      - run: gh pr list
+  c:
+    runs-on: ubuntu-latest
+    container: alpine
+    steps:
+      - run: gh pr list
+YAML
+refused "a job whose setup step is in another job" gh
+[ "$(grep -c 'job ' "$tmp/out")" = 1 ] || fail "a container job was read or the same call reported twice"
+
+rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+printf '[tools]\nyq = "4"\ngh = "2"\n' > "$tmp/r/mise.toml"
+cat > "$tmp/r/.github/workflows/anima-capabilities.yml" <<'YAML'
+name: anima-capabilities
+on: push
+jobs:
+  matrix-pr:
+    runs-on: [self-hosted, cocreiamo-ci]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/create-github-app-token@v2
+        id: token
+      - uses: peter-evans/create-pull-request@v7
+        id: pr
+      - name: gh pr merge "$PR_NUMBER" --auto --squash
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+        run: gh pr merge "$PR_NUMBER" --auto --squash
+YAML
+refused "the matrix-pr job that failed with exit 127 on main" gh
+echo "a run step that calls a tool the runner lacks, with nothing earlier installing it, is refused"
