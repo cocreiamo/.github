@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016  # the patterns and the case labels are literal text
+# Claude Code PreToolUse hook on Bash: refuses, before they run, the commands that CLAUDE.md forbids and nothing else
+# enforces. It reads the tool-input JSON on stdin and exits 2 with the reason on stderr (Claude Code shows it to the
+# agent); exit 0 lets the command run untouched. Blocked:
+#   pkill/pgrep with -f in any spelling (-fx, -af, --full): a pattern contained in the caller's own command line matches
+#     the shell itself and kills it;
+#   gh pr checks --watch/-w and gh run watch without --interval of 60 s or more, shell loops that call gh and sleep less
+#     than 60 s, watch gh: a few polling agents exhaust the shared 5000 requests an hour of the GitHub token;
+#   printing a secret to the transcript: cat/head/tail/... of /run/secrets, *.pem (not cert, chain or pub names) or
+#     *private-key* files, echo/printf of $*TOKEN*/$*SECRET*/$*PASSWORD* (not *_FILE/_PATH/_DIR); a segment that is piped
+#     or redirected is left alone, because that is how a secret reaches a tool without reaching the transcript.
+# A forbidden word is looked for only where a command starts (after ; && || | ( ` or a line break, past sudo/env/timeout
+# and variable assignments), so a commit message or a grep that merely mentions one passes.
+# Failure mode, on purpose: input that is not the expected JSON (or no jq) is allowed with a note on stderr, because
+# blocking every command on a parse problem is worse than missing one; but the raw text is still searched for the same
+# patterns, so a command that matches is blocked even then. Plain bash, one jq: well under 50 ms.
+set -u
+
+input=$(cat)
+parsed=1
+[ -n "$input" ] && cmd=$(jq -r 'if type == "object" then (.tool_input.command // "") else error("not an object") end' <<<"$input" 2>/dev/null) || parsed=0
+if [ "$parsed" = 0 ]; then
+  echo "claude-pre-bash: input is not a Bash tool call in JSON; only the forbidden patterns are checked on the raw text" >&2
+  cmd=${input//\\n/;}
+  json_punct='[\"{}:,]'
+  cmd=${cmd//$json_punct/;}
+fi
+[ -n "$cmd" ] || exit 0
+
+W='(((do|then|else|if|while|until|!|sudo|xargs|exec|command|nohup|time|env|timeout)[[:space:]]+(-[^[:space:]]+[[:space:]]+|[0-9]+[smh]?[[:space:]]+)*)|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+P='([^[:space:]]*/)?'
+
+block() {
+  printf 'Blocked by the repository hook claude-pre-bash: %s\n' "$1" >&2
+  exit 2
+}
+
+SEP=$'\n'
+c=${cmd//$SEP/;}
+c=${c//&&/;}
+c=${c//||/;}
+flat=${c//|/;}
+flat=${flat//&/;}
+flat=${flat//(/;}
+flat=${flat//)/;}
+flat=${flat//\`/;}
+
+seconds_under_60() { # seconds_under_60 <text>: succeeds when a sleep in the text lasts under 60 s
+  local t=$1 re='(^|[^[:alnum:]_.-])sleep[[:space:]]+([0-9]+)(\.[0-9]+)?([smhd]?)'
+  while [[ $t =~ $re ]]; do
+    case "${BASH_REMATCH[4]}" in
+      ''|s) [ "${BASH_REMATCH[2]}" -lt 60 ] && return 0 ;;
+    esac
+    t=${t#*"${BASH_REMATCH[0]}"}
+  done
+  return 1
+}
+
+slow_interval() { # slow_interval <segment>: succeeds when it carries --interval/-i of 60 s or more
+  local re='(^|[[:space:]])(--interval|-i)[[:space:]=]+([0-9]+)([[:space:]]|$)'
+  [[ $1 =~ $re ]] && [ "${BASH_REMATCH[3]}" -ge 60 ]
+}
+
+secret_word() { # secret_word <word>
+  local w=${1//[\"\']/}
+  case "$w" in
+    /run/secrets/* | */run/secrets/* | *private-key* | *private_key* | *privatekey*) return 0 ;;
+    *cert* | *chain* | *pub* | *ca-bundle*) return 1 ;;
+    *.pem) return 0 ;;
+  esac
+  return 1
+}
+
+pgrep_re="^[[:space:]]*${W}${P}(pkill|pgrep)[[:space:]]([^[:space:]]+[[:space:]]+)*-(-full|[A-Za-z]*f[A-Za-z]*)([[:space:]]|\$)"
+checks_re="^[[:space:]]*${W}${P}gh[[:space:]]+pr[[:space:]]+checks([[:space:]]|\$)"
+checks_watch_re='[[:space:]](--watch|-w)([[:space:]]|$)'
+runwatch_re="^[[:space:]]*${W}${P}gh[[:space:]]+run[[:space:]]+watch([[:space:]]|\$)"
+watch_re="^[[:space:]]*${W}${P}watch[[:space:]](.*[[:space:]])?[\"']?gh[[:space:]]"
+watch_n_re='[[:space:]](-n|--interval)[[:space:]=]*([0-9]+)'
+loop_re='(^|[;&|(`[:space:]])(while|until|for)[[:space:]]'
+gh_re='(^|[^[:alnum:]_.-])gh[[:space:]]'
+
+IFS=';' read -ra segs <<<"$flat"
+for seg in "${segs[@]}"; do
+  [ -n "${seg// /}" ] || continue
+  if [[ $seg =~ $pgrep_re ]]; then
+    block "pkill -f and pgrep -f match their own command line and kill the caller's shell. Use exact PIDs (kill <pid>), the task ID (TaskStop), or pgrep -x <name> / pkill -x <name>."
+  fi
+  if [[ $seg =~ $checks_re && $seg =~ $checks_watch_re ]] || [[ $seg =~ $runwatch_re ]]; then
+    slow_interval "$seg" ||
+      block "gh pr checks --watch and gh run watch poll every 3 to 10 s and exhaust the shared GitHub API quota. Use 'mise run pr:wait' (60 s polls, sleeps through a rate limit), or pass --interval 60 or more."
+  fi
+  if [[ $seg =~ $watch_re ]]; then
+    n=2
+    [[ $seg =~ $watch_n_re ]] && n=${BASH_REMATCH[2]}
+    [ "$n" -ge 60 ] ||
+      block "watch gh polls GitHub every ${n} s and exhausts the shared API quota. Use 'mise run pr:wait', or watch -n 60 or more."
+  fi
+done
+
+if [[ $c =~ $loop_re && $c =~ $gh_re ]] && seconds_under_60 "$c"; then
+  block "a shell loop that calls gh and sleeps less than 60 s exhausts the shared GitHub API quota. Use 'mise run pr:wait' (60 s polls, sleeps through a rate limit); a loop of your own sleeps 60 s or more."
+fi
+
+reader_re="^[[:space:]]*${W}${P}(cat|bat|head|tail|less|more|tac|nl|xxd|od|strings|base64)([[:space:]]|\$)"
+echo_re="^[[:space:]]*${W}(echo|printf)[[:space:]]"
+var_re='\$\{?[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*'
+sub_re='(\$\(|`)[[:space:]]*(cat|<)[[:space:]]+[^)`]*'
+IFS=';' read -ra segs <<<"$c"
+for seg in "${segs[@]}"; do
+  [[ $seg == *'|'* || $seg == *'>'* || $seg == *'<'* && $seg != *'$(<'* ]] && continue
+  if [[ $seg =~ $reader_re ]]; then
+    for w in $seg; do
+      ! secret_word "$w" || block "that would print a secret to the transcript ($w). Pass it on stdin to the tool that needs it, or check it exists with test -s; never display it."
+    done
+  fi
+  if [[ $seg =~ $echo_re ]]; then
+    t=$seg
+    while [[ $t =~ $var_re ]]; do
+      name=${BASH_REMATCH[0]#\$}
+      name=${name#\{}
+      case "$name" in
+        *_FILE | *_PATH | *_DIR) ;;
+        *) block "that would print a secret to the transcript (\$$name). Use it as a value for the tool that needs it, or print its length with \${#$name}." ;;
+      esac
+      t=${t#*"${BASH_REMATCH[0]}"}
+    done
+    if [[ $seg =~ $sub_re ]]; then
+      for w in ${BASH_REMATCH[0]}; do
+        ! secret_word "$w" || block "that would print a secret to the transcript ($w). Pass it on stdin to the tool that needs it; never display it."
+      done
+    fi
+  fi
+done
+exit 0

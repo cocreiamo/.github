@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016  # the commands are literal text, never to be expanded
+# The PreToolUse hook on Bash (shared/scripts/claude-pre-bash, or its vendored copy named in .github/shared-scripts) is fed
+# tool-input JSON: each forbidden command is blocked with exit 2 and a reason that names the way out, near misses and
+# ordinary commands pass untouched, input that is not JSON passes with a note on stderr unless it carries a forbidden
+# command, and the hook answers in well under 50 ms.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+hook="$repo/shared/scripts/claude-pre-bash"
+[ ! -f "$repo/.github/shared-scripts" ] || hook="$repo/$(awk '$1 == "claude-pre-bash" { print $2 }' "$repo/.github/shared-scripts")"
+[ -x "$hook" ] || { echo "FAIL: $hook is not an executable hook" >&2; exit 1; }
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+
+run() { # run <command>: the hook's exit code for a Bash tool call with that command
+  jq -n --arg c "$1" '{tool_name: "Bash", tool_input: {command: $c}}' | "$hook" 2> "$err" && return 0 || return $?
+}
+blocks() { # blocks <reason fragment> <command>
+  local code=0
+  run "$2" || code=$?
+  [ "$code" = 2 ] || { echo "FAIL: not blocked (exit $code): $2" >&2; exit 1; }
+  grep -qF -e "$1" "$err" || { echo "FAIL: the reason for '$2' lacks '$1': $(cat "$err")" >&2; exit 1; }
+}
+allows() {
+  local code=0
+  run "$1" || code=$?
+  [ "$code" = 0 ] || { echo "FAIL: blocked (exit $code): $1: $(cat "$err")" >&2; exit 1; }
+}
+
+pids='exact PIDs'
+for c in 'pkill -f foo' 'pgrep -f foo' 'pkill -fx foo' 'pgrep -af foo' 'pgrep -fl foo' 'pkill --full foo' \
+  'sudo pkill -f foo' 'echo a && pgrep -f foo' 'x=$(pgrep -f foo)' 'kill $(pgrep -f foo)' 'cd /tmp; pkill -9 -f foo' \
+  '/usr/bin/pgrep -f foo' 'ls | xargs pkill -f foo' 'if pgrep -f foo; then :; fi'; do
+  blocks "$pids" "$c"
+done
+
+wait='mise run pr:wait'
+for c in 'gh pr checks 12 --watch' 'gh pr checks --required -w' 'gh pr checks --watch --interval 10' 'gh pr checks 7 -w -i 30' \
+  'gh run watch 123' 'gh run watch 123 --interval 59' 'gh run watch 123 --exit-status' 'gh run watch --interval=5 123' \
+  'timeout 300 gh run watch 123' 'git push && gh pr checks --watch' 'gh run watch 1 --interval 5; gh run watch 2 --interval 60'; do
+  blocks "$wait" "$c"
+done
+for c in 'while true; do gh pr view 1; sleep 30; done' 'until gh run view 1 --json conclusion; do sleep 5; done' \
+  'for i in 1 2 3; do gh pr checks 1; sleep 10s; done' 'while :; do gh api rate_limit
+sleep 0.5
+done' 'watch gh pr checks 1' 'watch -n 5 gh run list' 'watch -n 59 "gh run list"'; do
+  blocks "$wait" "$c"
+done
+
+secret='would print a secret'
+for c in 'cat /run/secrets/db-password' 'head -c 20 /run/secrets/token' 'cat app.pem' 'cat ~/keys/github-app-private-key.pem' \
+  'cat private-key.txt; echo done' 'cat "/run/secrets/x"' 'echo $GH_TOKEN' 'echo "token: ${API_SECRET}"' 'printf "%s\n" "$DB_PASSWORD"' \
+  'echo $(cat /run/secrets/token)' 'tail /run/secrets/a /run/secrets/b'; do
+  blocks "$secret" "$c"
+done
+
+for c in 'pgrep -x name' 'pkill -x name' 'pkill -9 -x name' 'pgrep -u root sshd' 'kill 123' 'ps -ef | grep -v grep' \
+  'gh pr checks 12' 'gh pr checks 12 --required' 'gh pr view 12 --json state' 'gh run watch --interval 60 123' \
+  'gh run watch 123 --interval=120 --exit-status' 'gh pr checks 7 --watch --interval 90' 'gh pr checks 7 -w -i 60' \
+  'mise run pr:wait' 'mise run pr:wait -- --wait-only' 'mise run wt:pr' 'echo $HOME' 'echo hello' \
+  'while true; do gh pr view 1; sleep 60; done' 'while true; do gh pr view 1; sleep 2m; done' 'while read -r l; do echo "$l"; sleep 5; done < list' \
+  'for i in 1 2 3; do gh pr view "$i"; done' 'watch -n 60 gh run list' 'watch df' 'sleep 5' \
+  'cat /run/secrets/token | gh auth login --with-token' 'cat /run/secrets/x > /dev/shm/x' 'cat /run/secrets/x 2>/dev/null | wc -c' \
+  'x=$(cat /run/secrets/token)' 'cat ca-cert.pem' 'cat fullchain.pem' 'cat README.md' 'cat key.txt' 'ls /run/secrets' \
+  'echo "$GH_TOKEN" | gh auth login --with-token' 'echo "${#GH_TOKEN}"' 'echo $TOKEN_FILE' 'echo token' 'echo $PATH' \
+  'git commit -m "docs: never use pkill -f nor gh run watch"' 'grep -rn "pgrep -f" docs' 'echo "gh pr checks --watch is forbidden"' ''; do
+  allows "$c"
+done
+
+printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/x"}}' | "$hook" 2> "$err" || { echo "FAIL: a tool call without a command was blocked" >&2; exit 1; }
+for garbage in 'not json at all' '{"tool_input": ' '' '[1,2]'; do
+  code=0
+  printf '%s' "$garbage" | "$hook" 2> "$err" || code=$?
+  [ "$code" = 0 ] || { echo "FAIL: unparseable input '$garbage' was blocked" >&2; exit 1; }
+  grep -qF 'claude-pre-bash:' "$err" || { echo "FAIL: unparseable input '$garbage' passed without a note on stderr" >&2; exit 1; }
+done
+for garbage in 'broken {"command": "pkill -f foo"' 'broken {"command": "gh run watch 123"'; do
+  code=0
+  printf '%s' "$garbage" | "$hook" 2> "$err" || code=$?
+  [ "$code" = 2 ] || { echo "FAIL: unparseable input carrying a forbidden command was allowed: $garbage" >&2; exit 1; }
+done
+
+# BASH_ENV (nvm on a laptop) costs a bash 250 ms to start whatever it runs: the settings call the hook as env -u BASH_ENV
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"gh pr checks 12 --watch"}}' > "$err.in"
+start=$(date +%s%N)
+for _ in 1 2 3 4 5 6 7 8 9 10; do env -u BASH_ENV "$hook" < "$err.in" 2> /dev/null || true; done
+per_call=$(( ($(date +%s%N) - start) / 10 / 1000000 ))
+rm -f "$err.in"
+[ "$per_call" -lt 50 ] || { echo "FAIL: the hook takes $per_call ms a call (limit 50, jq included)" >&2; exit 1; }
+echo "the hook blocks what the rules forbid and passes the rest ($per_call ms a call)"
