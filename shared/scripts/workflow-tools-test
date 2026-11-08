@@ -76,6 +76,8 @@ fixture merge "$GH" "      - run: echo \${{ github.event.number }} \${{ secrets.
           gh = 1
       - run: 'true'"
 accepted "expressions, a local action, a python step and a platform tool"
+fixture merge "" "      - run: diff -r a b"
+accepted "diff, which every runner image has (verified by runner-tools.yml)"
 fixture merge "$GH" "      - run: gh pr list
         shell: pwsh"
 accepted "a step with another shell, which is not read"
