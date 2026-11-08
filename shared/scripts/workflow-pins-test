@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# workflow-pins-check.py (shared/scripts, or its vendored copy named in .github/shared-scripts) against reusable workflows
+# served from a fixture cache: an unknown input, an unknown secret, a missing required input or secret and a callee that
+# cannot be called are refused with the job named; a caller that matches, `secrets: inherit`, a local call and a call with
+# only optional inputs left out are accepted; the commit that really broke main (an alert pinned before title-prefix and label existed) is refused.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/workflow-pins-check.py"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "workflow-pins-check.py" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+old=1111111111111111111111111111111111111111
+new=2222222222222222222222222222222222222222
+nocall=3333333333333333333333333333333333333333
+cache="$tmp/cache/acme/shared/$old/.github/workflows"
+mkdir -p "$cache" "$tmp/cache/acme/shared/$new/.github/workflows" "$tmp/cache/acme/shared/$nocall/.github/workflows"
+cat > "$cache/alert.yml" <<'YAML'
+name: alert
+on:
+  workflow_call:
+    inputs:
+      failed:
+        required: true
+        type: string
+      app-id:
+        required: true
+        type: string
+      dry-run:
+        type: boolean
+        default: false
+    secrets:
+      app-private-key:
+        required: true
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+YAML
+sed -e '/^      dry-run:/i\      title-prefix:\n        type: string\n        default: ""\n      label:\n        type: string\n        default: main-red' "$cache/alert.yml" > "$tmp/cache/acme/shared/$new/.github/workflows/alert.yml"
+cat > "$tmp/cache/acme/shared/$nocall/.github/workflows/alert.yml" <<'YAML'
+name: alert
+on:
+  push:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+YAML
+
+caller() { # caller <name> <sha> <with-lines> <secrets-lines>: a repository whose single job calls the fixture workflow
+  rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+  {
+    printf 'name: x\non: push\njobs:\n  post:\n    uses: acme/shared/.github/workflows/alert.yml@%s # main\n' "$2"
+    [ -z "$3" ] || printf '    with:\n%s\n' "$3"
+    [ -z "$4" ] || printf '    secrets:\n%s\n' "$4"
+  } > "$tmp/r/.github/workflows/$1.yml"
+}
+run() { WORKFLOW_PINS_OFFLINE=1 WORKFLOW_PINS_CACHE="$tmp/cache" "$check" "$tmp/r" > "$tmp/out" 2>&1; }
+good_with=$'      failed: build\n      app-id: "1"'
+good_secrets="      app-private-key: \${{ secrets.K }}"
+
+caller ok "$old" "$good_with" "$good_secrets"
+run || { cat "$tmp/out" >&2; fail "refused a caller that matches the workflow at its pin"; }
+
+caller ok "$old" "$good_with" "$good_secrets"
+sed -i 's/^    secrets:$/    secrets: inherit/; /app-private-key/d' "$tmp/r/.github/workflows/ok.yml"
+run || { cat "$tmp/out" >&2; fail "refused secrets: inherit"; }
+
+caller unknown "$old" $'      failed: build\n      app-id: "1"\n      title-prefix: "drill: "' "$good_secrets"
+if run; then fail "accepted an input the workflow does not declare at its pin"; fi
+for word in title-prefix post unknown.yml; do
+  grep -q "$word" "$tmp/out" || { cat "$tmp/out" >&2; fail "an unknown input is refused without naming the file, the job and the input ($word)"; }
+done
+
+caller unknown "$new" $'      failed: build\n      app-id: "1"\n      title-prefix: "drill: "\n      label: drill' "$good_secrets"
+run || { cat "$tmp/out" >&2; fail "refused the inputs of a pin that declares them"; }
+
+caller missing "$old" '      failed: build' "$good_secrets"
+if run; then fail "accepted a caller that omits a required input"; fi
+grep -q "app-id" "$tmp/out" || { cat "$tmp/out" >&2; fail "a missing required input is refused without naming it"; }
+
+caller nosecret "$old" "$good_with" ''
+if run; then fail "accepted a caller that omits a required secret"; fi
+grep -q "app-private-key" "$tmp/out" || { cat "$tmp/out" >&2; fail "a missing required secret is refused without naming it"; }
+
+caller badsecret "$old" "$good_with" $'      app-private-key: x\n      token: y'
+if run; then fail "accepted a secret the workflow does not declare"; fi
+grep -q "token" "$tmp/out" || { cat "$tmp/out" >&2; fail "an unknown secret is refused without naming it"; }
+
+caller nocall "$nocall" "$good_with" "$good_secrets"
+if run; then fail "accepted a pin whose workflow has no workflow_call"; fi
+
+caller gone "4444444444444444444444444444444444444444" "$good_with" "$good_secrets"
+if run; then fail "accepted a pin whose workflow cannot be read"; fi
+grep -q 'cannot read' "$tmp/out" || { cat "$tmp/out" >&2; fail "an unreadable pin is refused without saying so"; }
+
+rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+cat > "$tmp/r/.github/workflows/local.yml" <<'YAML'
+name: x
+on: push
+jobs:
+  title:
+    uses: ./.github/workflows/pr-title.yml
+    with:
+      anything: goes
+  step:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+YAML
+run || { cat "$tmp/out" >&2; fail "refused a local call or a step action, which actionlint covers"; }
+
+rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows" "$tmp/real/acme/shared/b2776360ffd8d0d0db1629c7dac4bfd6043a88eb/.github/workflows"
+cp "$tmp/cache/acme/shared/$old/.github/workflows/alert.yml" "$tmp/real/acme/shared/b2776360ffd8d0d0db1629c7dac4bfd6043a88eb/.github/workflows/alert.yml"
+cat > "$tmp/r/.github/workflows/anima-capabilities.yml" <<'YAML'
+name: anima-capabilities
+on: push
+jobs:
+  alert:
+    uses: acme/shared/.github/workflows/alert.yml@b2776360ffd8d0d0db1629c7dac4bfd6043a88eb # main
+    with:
+      failed: "probe"
+      app-id: ${{ vars.APP }}
+      title-prefix: "capabilities: "
+      label: anima-capabilities
+    secrets:
+      app-private-key: ${{ secrets.K }}
+YAML
+if WORKFLOW_PINS_OFFLINE=1 WORKFLOW_PINS_CACHE="$tmp/real" "$check" "$tmp/r" > "$tmp/out" 2>&1; then fail "accepted the caller that failed at startup on main"; fi
+grep -q 'title-prefix' "$tmp/out" || { cat "$tmp/out" >&2; fail "the startup failure of main is refused without the input"; }
+echo "a caller whose with: or secrets: do not match the workflow at its pin is refused"
