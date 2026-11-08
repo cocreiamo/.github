@@ -25,6 +25,7 @@ refused() { # <what> <command named in the refusal>
 accepted() { "$check" "$tmp/r" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
 
 GH='gh = "2.0.0"'
+# shellcheck disable=SC2016 # the text of the step under test
 MERGE='      - name: merge
         run: gh pr merge "$PR" --auto --squash'
 SETUP='      - run: ci-mise-setup'
