@@ -12,7 +12,7 @@
 # decision raises the alert and fails the job, so a red main is never silent.
 # No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
 # revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past (unless the caller passes moved-ok), a commit whose
-# revert is already open, a commit after which a later run of the same workflow on main succeeded (main is green again); the first three still raise the alert. dry-run does everything except write.
+# revert is already open, a commit after which a later run of the same workflow on main succeeded, or a run that succeeded on the head of main (main is green again); the first three still raise the alert. dry-run does everything except write. A revert PR that is already open when main turns green is closed by post-merge-green.yml.
 name: post-merge-revert
 on:
   workflow_call:
@@ -94,6 +94,8 @@ jobs:
                 return out["data"]
 
             def decide(f):
+                if f.get("head_green"):
+                    return {"action": "skip", "reason": "main is green at its head: nothing is red to revert"}
                 if f.get("green_after"):
                     return {"action": "skip", "reason": "main is green again: a later run of the same workflow succeeded after this commit"}
                 if f["head_sha"] != f["sha"] and not f["moved_ok"]:
@@ -123,6 +125,19 @@ jobs:
                     return False
                 return any(r["conclusion"] == "success" and r["created_at"] > this["created_at"] for r in runs)
 
+            def head_green(repo, run_url, head):
+                # Opening a revert needs main to be red where it is now: a run of the same workflow that succeeded on the head says it is not.
+                m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
+                if not m:
+                    return False
+                try:
+                    this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)), "READ_TOKEN")
+                    runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]), "READ_TOKEN")["workflow_runs"]
+                except RuntimeError as e:
+                    print("runs unreadable, main is not assumed green: %s" % e, file=sys.stderr)
+                    return False
+                return any(r["conclusion"] == "success" and r.get("head_sha") == head for r in runs)
+
             def gather(repo, sha, run_url=""):
                 head = api("/repos/%s/git/ref/heads/main" % repo)["object"]["sha"]
                 title = api("/repos/%s/commits/%s" % (repo, sha))["commit"]["message"].split("\n")[0]
@@ -134,7 +149,7 @@ jobs:
                 marker = "<!-- post-merge-revert:%s -->" % sha
                 opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
                 return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened),
-                        "green_after": green_after(repo, run_url)}
+                        "green_after": green_after(repo, run_url), "head_green": head_green(repo, run_url, head)}
 
             def run(env):
                 repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
