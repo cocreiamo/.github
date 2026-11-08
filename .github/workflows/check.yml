@@ -42,6 +42,7 @@ jobs:
       - run: bash tests/post-merge-skip.sh
       - run: bash tests/worktrees.sh
       - run: bash tests/pr-wait.sh
+      - run: bash tests/claude-pre-bash.sh
       - run: bash tests/workflow-pins.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
