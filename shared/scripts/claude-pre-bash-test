@@ -47,6 +47,14 @@ done' 'watch gh pr checks 1' 'watch -n 5 gh run list' 'watch -n 59 "gh run list"
   blocks "$wait" "$c"
 done
 
+stash='git stash is shared across worktrees; commit to a WIP commit on your branch or use git diff > file / git apply instead'
+for c in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash pop' 'git stash apply' 'git stash drop' 'git stash list' 'git stash -u' \
+  'git -C /tmp/x stash' 'git --no-pager stash pop' 'git -c user.name=a stash' 'cd x && git stash' 'git add -A; git stash' 'echo a | xargs git stash' \
+  'sudo git stash' 'if git stash; then :; fi' '/usr/bin/git stash pop' 'x=$(git stash create)' 'git status
+git stash'; do
+  blocks "$stash" "$c"
+done
+
 secret='would print a secret'
 for c in 'cat /run/secrets/db-password' 'head -c 20 /run/secrets/token' 'cat app.pem' 'cat ~/keys/github-app-private-key.pem' \
   'cat private-key.txt; echo done' 'cat "/run/secrets/x"' 'echo $GH_TOKEN' 'echo "token: ${API_SECRET}"' 'printf "%s\n" "$DB_PASSWORD"' \
@@ -62,6 +70,8 @@ for c in 'pgrep -x name' 'pkill -x name' 'pkill -9 -x name' 'pgrep -u root sshd'
   'for i in 1 2 3; do gh pr view "$i"; done' 'watch -n 60 gh run list' 'watch df' 'sleep 5' \
   'cat /run/secrets/token | gh auth login --with-token' 'cat /run/secrets/x > /dev/shm/x' 'cat /run/secrets/x 2>/dev/null | wc -c' \
   'x=$(cat /run/secrets/token)' 'cat ca-cert.pem' 'cat fullchain.pem' 'cat README.md' 'cat key.txt' 'ls /run/secrets' \
+  'git log --grep stash' 'echo git stash' 'git commit -m "wip: no git stash here"' 'git diff > wip.patch && git apply wip.patch' 'git stashed' \
+  'git log --oneline -- stash.txt' 'git add stash' 'grep -rn "git stash" docs' 'git branch stash-fix' 'git config alias.stash x' 'git worktree list' \
   'echo "$GH_TOKEN" | gh auth login --with-token' 'echo "${#GH_TOKEN}"' 'echo $TOKEN_FILE' 'echo token' 'echo $PATH' \
   'gh pr create --title "docs: never use pkill -f nor gh run watch"' 'grep -rn "pgrep -f" docs' 'echo "gh pr checks --watch is forbidden"' ''; do
   allows "$c"
