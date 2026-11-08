@@ -89,4 +89,15 @@ git -C "$tmp/sparse" sparse-checkout set --no-cone CLAUDE.md .github/shared-scri
 (cd "$tmp/sparse" && PATH="$tmp/fakebin:$PATH" GH_TOKEN=token bash -c "$fetch") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "the fetch step does not give git the job token"; }
 [ -f "$tmp/sparse/tasks/gc" ] || fail "the fetch step with the token did not bring the declared files"
 [ ! -e "$tmp/sparse/other" ] || fail "the fetch step brought a file nobody declared"
+# A shared test is vendored as tools/tests/*.sh of the monorepo, whose hermetic-git check refuses a literal git init/commit/commit-tree without
+# lib/hermetic-git.sh: a shared test names none (worktrees-test is not vendored there).
+literal_git='\bgit( +-[-A-Za-z]+( +[^ -][^ ]*)?)* +(init|commit|commit-tree)\b'
+printf '%s\n' "git commit -m x" "git -C d init" "git -c a=b commit-tree T" > "$tmp/bad-literal"
+[ "$(grep -cE "$literal_git" "$tmp/bad-literal")" = 3 ] || fail "the literal git pattern does not catch git commit, init and commit-tree"
+printf '%s\n' "git log --grep commit" "git status" > "$tmp/ok-literal"
+[ "$(grep -cE "$literal_git" "$tmp/ok-literal" || true)" = 0 ] || fail "the literal git pattern catches a command that is not git init or commit"
+for f in "$scripts"/*-test "$scripts"/*.sh; do
+  [ "${f##*/}" != worktrees-test ] || continue
+  ! grep -qE "$literal_git" "$f" || fail "${f##*/} runs a literal git init/commit: the monorepo's hermetic-git check refuses it; build the command from parts or use another command"
+done
 echo "shared-scripts ok"
