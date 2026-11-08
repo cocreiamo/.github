@@ -9,7 +9,7 @@ PR = {"number": 12, "title": "feat: add x", "head_ref": "add-x", "author": "iamb
 
 
 def facts(**kw):
-    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False, "green_after": False}
+    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False, "green_after": False, "head_green": False}
     f.update(kw)
     return f
 
@@ -30,6 +30,8 @@ check("moved_ok never reverts a revert", action(head_sha=OTHER, moved_ok=True, c
 check("moved_ok still skips a revert already open", action(head_sha=OTHER, moved_ok=True, open_revert=True), "skip")
 check("main is green again after the commit: skip", action(green_after=True), "skip")
 check("green again wins over a revert-worthy PR even when main moved", action(green_after=True, head_sha=OTHER, moved_ok=True), "skip")
+check("main is green at its head: skip", action(head_green=True), "skip")
+check("green at the head wins over a moved head with moved_ok", action(head_green=True, head_sha=OTHER, moved_ok=True), "skip")
 check("a revert PR already open: skip", action(open_revert=True), "skip")
 check("main moved on wins over everything", action(head_sha=OTHER, pr=None), "skip")
 check("never revert a revert (commit title)", action(commit_title="revert: feat: add x (#13)"), "alert")
@@ -146,6 +148,11 @@ check("main is green again: succeeds", r.returncode, 0)
 check("main is green again: nothing mutated", mutating(calls), [])
 r, calls = run(runs=[OLD_OK, NEW_RED])
 check("a green run before the commit and a red one after it: reverted", "revertPullRequest" in json.dumps(calls), True)
+
+HEAD_OK = {"created_at": "2025-12-31T00:00:00Z", "conclusion": "success", "head_sha": SHA}
+r, calls = run(runs=[HEAD_OK])
+check("main is green at its head: succeeds", r.returncode, 0)
+check("main is green at its head: nothing mutated", mutating(calls), [])
 
 r, calls = run(open=True)
 check("revert already open: nothing mutated", mutating(calls), [])

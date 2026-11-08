@@ -1,0 +1,7 @@
+id: dotgithub/test/post-merge-green.sh
+repo: dotgithub
+invariant: 'post-merge-green.yml: when main is green again, the revert PRs opened for an earlier red commit are closed (auto-merge off, a comment naming the green commit) and never merge; a green commit older than the red one, another line of history, or a PR with no marker closes nothing.'
+runs:
+- pr-ci
+command: bash tests/post-merge-green.sh
+file: tests/post-merge-green.sh
