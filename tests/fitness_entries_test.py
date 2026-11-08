@@ -92,6 +92,13 @@ class FitnessEntries(unittest.TestCase):
         found = run(root, "dotgithub")
         self.assertEqual(len(found), 2)
 
+    def test_infrastructure_discovers_its_tasks_policies_and_contracts(self):
+        root = repo(
+            ["mise-tasks/test/a", "mise-tasks/check/b", "mise-tasks/verify", "mise-tasks/lint", "tests/policy/p.rego", "tests/contracts/c.py", "lib/ignored.py"],
+            {},
+        )
+        self.assertEqual(len(run(root, "infrastructure")), 6)
+
     def test_duplicate_id_is_refused(self):
         root = repo(["tools/tests/bar.sh"], {"cocreiamo_test_bar.sh.yaml": PLAIN, "cocreiamo_test_bar.sh.yml.yaml": PLAIN})
         self.assertTrue(any("duplicate id" in p for p in run(root)))
