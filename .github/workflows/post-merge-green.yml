@@ -1,0 +1,123 @@
+# Reusable: after a green run on main, close the revert PRs that post-merge-revert.yml opened for an earlier red commit, so a fix-forward
+# is never undone by an automatic revert that outlived it. A caller adds one job to the workflow that runs the required checks on push to main:
+#   post-merge-green:
+#     needs: [<the required jobs>]
+#     if: ${{ always() && github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+#     permissions: {actions: read}
+#     uses: cocreiamo/.github/.github/workflows/post-merge-green.yml@<sha>
+#     with: {app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
+#     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+# A revert PR carries the marker post-merge-revert:<red sha>. It is closed only when the green commit is a descendant of the red one (a green run of
+# an older commit proves nothing about it): auto-merge is switched off, a comment names the green commit, and the `main is red` issue the revert
+# would have closed is closed with it. A failure raises the alert, so an open revert is never silent. No gh binary on the runner: plain HTTPS to the API.
+name: post-merge-green
+on:
+  workflow_call:
+    inputs:
+      app-id:
+        type: string
+        required: true
+      sha:
+        description: the green commit, default the commit of the run
+        type: string
+        default: ""
+      dry-run:
+        type: boolean
+        default: false
+      assignee:
+        type: string
+        default: iambilotta
+    secrets:
+      app-private-key:
+        required: true
+permissions: {}
+jobs:
+  close:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: close the reverts
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha || github.sha }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SCRIPT: |
+            import json, os, re, sys, urllib.error, urllib.request
+
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            def call(method, path, body=None):
+                req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        raw = r.read()
+                except urllib.error.HTTPError as e:
+                    raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
+                return json.loads(raw) if raw else None
+
+            def run(env):
+                repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
+                for p in call("GET", "/repos/%s/pulls?state=open&per_page=100" % repo):
+                    m = re.search(r"<!-- post-merge-revert:([0-9a-f]{40}) -->", p.get("body") or "")
+                    if not m or not p["head"]["ref"].startswith("revert"):
+                        continue
+                    red = m.group(1)
+                    status = call("GET", "/repos/%s/compare/%s...%s" % (repo, red, sha))["status"]
+                    if status != "ahead":
+                        print("revert PR #%d: the green commit %s is %s the red commit %s, left open" % (p["number"], sha[:12], status, red[:12]))
+                        continue
+                    if dry:
+                        print("dry run, would close revert PR #%d: main is green at %s" % (p["number"], sha[:12]))
+                        continue
+                    try:
+                        out = call("POST", "/graphql", {"query": "mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}", "variables": {"id": p["node_id"]}})
+                        if out.get("errors"):
+                            print("auto-merge of #%d was not on: %s" % (p["number"], json.dumps(out["errors"])[:200]))
+                    except RuntimeError as e:
+                        print("auto-merge of #%d could not be switched off: %s" % (p["number"], e), file=sys.stderr)
+                    note = "Closed without merging: main is green again at %s (%s/commit/%s), which contains the red commit %s, so this revert is no longer needed." % (
+                        sha, env["RUN_URL"].split("/actions/")[0], sha, red)
+                    call("POST", "/repos/%s/issues/%d/comments" % (repo, p["number"]), {"body": note + " Run: " + env["RUN_URL"]})
+                    call("PATCH", "/repos/%s/pulls/%d" % (repo, p["number"]), {"state": "closed"})
+                    print("closed revert PR #%d" % p["number"])
+                    issue = re.search(r"Closes #([0-9]+)", p.get("body") or "")
+                    if issue:
+                        n = int(issue.group(1))
+                        call("POST", "/repos/%s/issues/%d/comments" % (repo, n), {"body": note})
+                        call("PATCH", "/repos/%s/issues/%d" % (repo, n), {"state": "closed", "state_reason": "completed"})
+                return 0
+
+            def main(env):
+                try:
+                    return run(env)
+                except Exception as e:
+                    print("closing the reverts failed: %s" % e, file=sys.stderr)
+                    if env.get("DRY_RUN") == "true":
+                        return 1
+                    try:
+                        call("POST", "/repos/%s/labels" % env["REPO"], {"name": "main-red", "color": "b60205"})
+                    except Exception:
+                        pass
+                    call("POST", "/repos/%s/issues" % env["REPO"], {"title": "main is green but a revert PR may still merge", "labels": ["main-red"], "assignees": [env["ASSIGNEE"]], "body": "\n".join([
+                        "Main is green at %s: %s" % (env["SHA"], env["RUN_URL"]),
+                        "", "Closing the open revert PRs failed (%s). Close them by hand: they undo work that is already fixed." % e])})
+                    return 1
+
+            if __name__ == "__main__":
+                sys.exit(main(os.environ))
+        run: python3 -I -c "$SCRIPT"
