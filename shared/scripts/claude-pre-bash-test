@@ -63,7 +63,7 @@ for c in 'pgrep -x name' 'pkill -x name' 'pkill -9 -x name' 'pgrep -u root sshd'
   'cat /run/secrets/token | gh auth login --with-token' 'cat /run/secrets/x > /dev/shm/x' 'cat /run/secrets/x 2>/dev/null | wc -c' \
   'x=$(cat /run/secrets/token)' 'cat ca-cert.pem' 'cat fullchain.pem' 'cat README.md' 'cat key.txt' 'ls /run/secrets' \
   'echo "$GH_TOKEN" | gh auth login --with-token' 'echo "${#GH_TOKEN}"' 'echo $TOKEN_FILE' 'echo token' 'echo $PATH' \
-  'git commit -m "docs: never use pkill -f nor gh run watch"' 'grep -rn "pgrep -f" docs' 'echo "gh pr checks --watch is forbidden"' ''; do
+  'gh pr create --title "docs: never use pkill -f nor gh run watch"' 'grep -rn "pgrep -f" docs' 'echo "gh pr checks --watch is forbidden"' ''; do
   allows "$c"
 done
 
