@@ -1,6 +1,6 @@
 id: dotgithub/test/claude-pre-bash.sh
 repo: dotgithub
-invariant: 'The shared Claude Code PreToolUse hook on Bash blocks pkill/pgrep -f, a gh watch under 60 s, a gh polling loop under 60 s and the printing of a secret, passes near misses and unparseable input, and answers in under 50 ms.'
+invariant: 'The shared Claude Code PreToolUse hook on Bash blocks pkill/pgrep -f, a gh watch under 60 s, a gh polling loop under 60 s, git stash and the printing of a secret, passes near misses and unparseable input, and answers in under 50 ms.'
 runs:
 - pr-ci
 command: bash tests/claude-pre-bash.sh

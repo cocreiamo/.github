@@ -7,6 +7,7 @@
 #     the shell itself and kills it;
 #   gh pr checks --watch/-w and gh run watch without --interval of 60 s or more, shell loops that call gh and sleep less
 #     than 60 s, watch gh: a few polling agents exhaust the shared 5000 requests an hour of the GitHub token;
+#   git stash, any subcommand: the stash is one list per clone, shared by every worktree, so two agents pop each other's work;
 #   printing a secret to the transcript: cat/head/tail/... of /run/secrets, *.pem (not cert, chain or pub names) or
 #     *private-key* files, echo/printf of $*TOKEN*/$*SECRET*/$*PASSWORD* (not *_FILE/_PATH/_DIR); a segment that is piped
 #     or redirected is left alone, because that is how a secret reaches a tool without reaching the transcript.
@@ -78,6 +79,7 @@ checks_watch_re='[[:space:]](--watch|-w)([[:space:]]|$)'
 runwatch_re="^[[:space:]]*${W}${P}gh[[:space:]]+run[[:space:]]+watch([[:space:]]|\$)"
 watch_re="^[[:space:]]*${W}${P}watch[[:space:]](.*[[:space:]])?[\"']?gh[[:space:]]"
 watch_n_re='[[:space:]](-n|--interval)[[:space:]=]*([0-9]+)'
+stash_re="^[[:space:]]*${W}${P}git[[:space:]]+((-[Cc]|--git-dir|--work-tree|--namespace)[[:space:]]+[^[:space:]]+[[:space:]]+|-[^[:space:]]*[[:space:]]+)*stash([[:space:]]|\$)"
 loop_re='(^|[;&|(`[:space:]])(while|until|for)[[:space:]]'
 gh_re='(^|[^[:alnum:]_.-])gh[[:space:]]'
 
@@ -96,6 +98,9 @@ for seg in "${segs[@]}"; do
     [[ $seg =~ $watch_n_re ]] && n=${BASH_REMATCH[2]}
     [ "$n" -ge 60 ] ||
       block "watch gh polls GitHub every ${n} s and exhausts the shared API quota. Use 'mise run pr:wait', or watch -n 60 or more."
+  fi
+  if [[ $seg =~ $stash_re ]]; then
+    block "git stash is shared across worktrees; commit to a WIP commit on your branch or use git diff > file / git apply instead"
   fi
 done
 
