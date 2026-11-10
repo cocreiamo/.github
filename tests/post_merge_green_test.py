@@ -32,6 +32,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if SC["list_fails"]:
                 return self.reply(500, {})
             return self.reply(200, SC["open"])
+        if "/issues?labels=main-red" in p:
+            return self.reply(200, SC["issues"])
         if "/compare/" in p:
             base = p.split("/compare/")[1].split("...")[0]
             return self.reply(200, {"status": SC["compare"].get(base, "diverged")})
@@ -68,7 +70,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 def run(dry=False, **kw):
     SC.clear()
-    SC.update({"open": [pr(78, RED)], "compare": {RED: "ahead"}, "list_fails": False, "disable_fails": False})
+    SC.update({"open": [pr(78, RED)], "compare": {RED: "ahead"}, "issues": [], "list_fails": False, "disable_fails": False})
     SC.update(kw)
     del LOG[:]
     env = {
@@ -133,4 +135,39 @@ check("an unreadable list fails the job", r.returncode != 0, True)
 issues = [c for c in calls if c[0] == "POST" and c[1].endswith("/issues")]
 if len(issues) != 1 or "main-red" not in json.dumps(issues):
     sys.exit("FAIL: a failure to close must raise the alert: " + json.dumps(calls))
+
+def issue(number, sha, body="The required job(s) fast failed on the merge commit %s of PR #12 (feat: x) on main: https://github.com/cocreiamo/x/actions/runs/1", **kw):
+    return {"number": number, "title": "main is red: feat: x (#12)", "body": body % sha if "%s" in body else body, **kw}
+
+
+def closed_issues(calls):
+    return sorted(c[1].rsplit("/", 1)[1] for c in calls if c[0] == "PATCH" and "/issues/" in c[1] and c[2].get("state") == "closed")
+
+
+# a main-red issue is closed when the green commit contains its commit, with or without a revert PR
+r, calls = run(open=[], issues=[issue(348, RED)])
+check("an issue of an earlier red commit is closed", closed_issues(calls), ["348"])
+if not any(c[1].endswith("/issues/348/comments") and GREEN in c[2]["body"] for c in calls):
+    sys.exit("FAIL: the issue got no comment naming the green commit: " + json.dumps(calls))
+check("a closed issue is completed", [c[2]["state_reason"] for c in calls if c[0] == "PATCH" and c[1].endswith("/issues/348")], ["completed"])
+r, calls = run(open=[], compare={RED: "identical"}, issues=[issue(348, RED)])
+check("an issue of the green commit itself (a repeat that passed) is closed", closed_issues(calls), ["348"])
+r, calls = run(open=[], compare={RED: "behind"}, issues=[issue(348, RED)])
+check("an issue of a newer commit stays open", mutating(calls), [])
+r, calls = run(open=[], compare={RED: "diverged"}, issues=[issue(348, RED)])
+check("an issue of another line stays open", mutating(calls), [])
+r, calls = run(open=[], issues=[issue(349, RED, body="The job publish failed on %s on main: https://x")])
+check("an alert of a job that is never reverted stays open", mutating(calls), [])
+r, calls = run(open=[], issues=[issue(350, RED, body="no commit here")])
+check("an issue naming no commit stays open", mutating(calls), [])
+r, calls = run(open=[], issues=[issue(351, RED, pull_request={"url": "x"})])
+check("a pull request is never closed as an issue", mutating(calls), [])
+r, calls = run(open=[], issues=[issue(348, RED)], dry=True)
+check("a dry run closes no issue", mutating(calls), [])
+if "would close issue #348" not in r.stdout:
+    sys.exit("FAIL: a dry run does not say what it would do: " + r.stdout)
+r, calls = run(issues=[issue(77, RED)])
+check("the issue a closed revert links is closed once", closed_issues(calls), ["77"])
+r, calls = run(open=[], issues=[issue(348, RED), issue(349, SIDE)], compare={RED: "ahead", SIDE: "behind"})
+check("only the issues of ancestors are closed", closed_issues(calls), ["348"])
 print("python cases ok")

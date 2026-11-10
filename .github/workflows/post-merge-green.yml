@@ -9,7 +9,8 @@
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
 # A revert PR carries the marker post-merge-revert:<red sha>. It is closed only when the green commit is a descendant of the red one (a green run of
 # an older commit proves nothing about it): auto-merge is switched off, a comment names the green commit, and the `main is red` issue the revert
-# would have closed is closed with it. A failure raises the alert, so an open revert is never silent. No gh binary on the runner: plain HTTPS to the API.
+# would have closed is closed with it; so is every other open `main is red` issue the revert workflow raised (body starting «The required job(s)») whose red commit the green commit
+# is, or descends from (the alert of a job that is never reverted stays open: a green required job says nothing about a publish). A failure raises the alert, so an open revert is never silent. No gh binary on the runner: plain HTTPS to the API.
 name: post-merge-green
 on:
   workflow_call:
@@ -72,6 +73,7 @@ jobs:
 
             def run(env):
                 repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
+                done = set()
                 for p in call("GET", "/repos/%s/pulls?state=open&per_page=100" % repo):
                     m = re.search(r"<!-- post-merge-revert:([0-9a-f]{40}) -->", p.get("body") or "")
                     if not m or not p["head"]["ref"].startswith("revert"):
@@ -98,8 +100,25 @@ jobs:
                     issue = re.search(r"Closes #([0-9]+)", p.get("body") or "")
                     if issue:
                         n = int(issue.group(1))
+                        done.add(n)
                         call("POST", "/repos/%s/issues/%d/comments" % (repo, n), {"body": note})
                         call("PATCH", "/repos/%s/issues/%d" % (repo, n), {"state": "closed", "state_reason": "completed"})
+                red_issues = call("GET", "/repos/%s/issues?labels=main-red&state=open&per_page=100" % repo)
+                for i in red_issues:
+                    m = re.match(r"The required job\(s\)[^\n]*? (?:merge commit|failed on) ([0-9a-f]{40})", i.get("body") or "")
+                    if "pull_request" in i or not m or i["number"] in done:
+                        continue
+                    status = call("GET", "/repos/%s/compare/%s...%s" % (repo, m.group(1), sha))["status"]
+                    if status not in ("ahead", "identical"):
+                        print("issue #%d: the green commit %s is %s the red commit %s, left open" % (i["number"], sha[:12], status, m.group(1)[:12]))
+                        continue
+                    if dry:
+                        print("dry run, would close issue #%d: main is green at %s" % (i["number"], sha[:12]))
+                        continue
+                    note = "Closed: main is green again at %s (%s/commit/%s), which contains the red commit %s. Run: %s" % (sha, env["RUN_URL"].split("/actions/")[0], sha, m.group(1), env["RUN_URL"])
+                    call("POST", "/repos/%s/issues/%d/comments" % (repo, i["number"]), {"body": note})
+                    call("PATCH", "/repos/%s/issues/%d" % (repo, i["number"]), {"state": "closed", "state_reason": "completed"})
+                    print("closed issue #%d" % i["number"])
                 return 0
 
             def main(env):
