@@ -65,7 +65,7 @@ chmod +x "$tmp/bin/df"
 rc=0
 (cd "$tmp/roomy" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" CI='' "$lock" echo never > "$tmp/f.out" 2> "$tmp/f.err") || rc=$?
 [ "$rc" = 75 ] || fail "a full temp dir exited $rc, not 75"
-grep -q 'free' "$tmp/f.err" && grep -q 'HEAVY_LOCK_MIN_FREE_GB' "$tmp/f.err" || fail "no clear message for a full temp dir: $(cat "$tmp/f.err")"
+{ grep -q 'free' "$tmp/f.err" && grep -q 'HEAVY_LOCK_MIN_FREE_GB' "$tmp/f.err"; } || fail "no clear message for a full temp dir: $(cat "$tmp/f.err")"
 [ ! -s "$tmp/f.out" ] || fail "the command ran on a full disk"
 rc=0
 (cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/roomy" CI='' "$lock" echo never > "$tmp/g.out" 2> "$tmp/g.err") || rc=$?

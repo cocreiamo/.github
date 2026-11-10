@@ -2,6 +2,7 @@
 # mktemp-trap-check on fixture trees: a shell script that calls mktemp with no EXIT trap that removes what it made is refused (the leaked tmp.* directories
 # that filled a workstation disk), as are an EXIT trap that does not remove anything and an allowlist line without a reason; a script with the trap, one that
 # only names mktemp in a comment or runs `mktemp -u`, a non-shell file and an allowlisted script pass; the offenders are counted and listed.
+# shellcheck disable=SC2016 # the fixture bodies are single-quoted on purpose: they are script text, not expanded here
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 check="$repo/shared/scripts/mktemp-trap-check"
