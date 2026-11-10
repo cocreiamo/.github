@@ -1,0 +1,7 @@
+id: dotgithub/test/ci-aggregator.sh
+repo: dotgithub
+invariant: 'The workflow of the pull request checks has the job ci, the one required check of the repository: re-actors/alls-green pinned by commit, always() so it reports after a failed dependency, and every other job under it.'
+runs:
+- pr-ci
+command: bash tests/ci-aggregator.sh
+file: tests/ci-aggregator.sh
