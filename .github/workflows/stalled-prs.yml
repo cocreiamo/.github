@@ -173,7 +173,7 @@ jobs:
     if: ${{ always() && inputs.alert && needs.stalled.result == 'failure' }}
     permissions:
       actions: read
-    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@4bc3730d445176c5c10c8868338e2cfc0235d653 # main
+    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@d45f538c39c607129f8d6ff1c71097135b4bd1e2 # main
     with:
       failed: "stalled"
       app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
