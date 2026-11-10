@@ -1,0 +1,7 @@
+id: dotgithub/test/post-merge-retry.sh
+repo: dotgithub
+invariant: 'post-merge-retry.yml repeats the failed jobs of a red first attempt once and never a second attempt, a green or cancelled run or a dry run; a refused repeat fails the job.'
+runs:
+- pr-ci
+command: bash tests/post-merge-retry.sh
+file: tests/post-merge-retry.sh

@@ -1,0 +1,72 @@
+# Reusable: repeat the failed jobs of a red run on main once, so a transient failure never reaches post-merge-revert.yml as a verdict. GitHub refuses
+# to rerun a run from inside itself ("This workflow is already running"), so the repeat is made by a workflow_run workflow of the caller, after the run completed:
+#   name: post-merge-retry
+#   on: {workflow_run: {workflows: [<the check workflow>], types: [completed], branches: [main]}}
+#   permissions: {}
+#   jobs:
+#     retry:
+#       if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1 }}
+#       permissions: {actions: write}
+#       uses: cocreiamo/.github/.github/workflows/post-merge-retry.yml@<sha>
+#       with: {run-id: "${{ github.event.workflow_run.id }}"}
+# The caller's post-merge job passes `retry: true` to post-merge-revert.yml: its first attempt only alerts, the attempt this workflow starts decides. A failure here fails
+# the job, and the alert of the first attempt stays open.
+name: post-merge-retry
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        type: string
+        required: true
+      dry-run:
+        type: boolean
+        default: false
+permissions: {}
+jobs:
+  retry:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: repeat the failed jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run-id }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          SCRIPT: |
+            import json, os, sys, urllib.error, urllib.request
+
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            def call(method, path):
+                req = urllib.request.Request(API + path, method=method, data=b"" if method == "POST" else None, headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        raw = r.read()
+                except urllib.error.HTTPError as e:
+                    raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
+                return json.loads(raw) if raw else None
+
+            def main(env):
+                repo, run_id = env["REPO"], env["RUN_ID"]
+                try:
+                    this = call("GET", "/repos/%s/actions/runs/%s" % (repo, run_id))
+                    if this["run_attempt"] != 1 or this["conclusion"] != "failure":
+                        print("run %s: attempt %s, %s: nothing to repeat" % (run_id, this["run_attempt"], this["conclusion"]))
+                        return 0
+                    if env["DRY_RUN"] == "true":
+                        print("dry run, would repeat the failed jobs of run %s" % run_id)
+                        return 0
+                    call("POST", "/repos/%s/actions/runs/%s/rerun-failed-jobs" % (repo, run_id))
+                except Exception as e:
+                    print("the failed jobs could not be repeated: %s" % e, file=sys.stderr)
+                    return 1
+                print("repeating the failed jobs of run %s" % run_id)
+                return 0
+
+            if __name__ == "__main__":
+                sys.exit(main(os.environ))
+        run: python3 -I -c "$SCRIPT"

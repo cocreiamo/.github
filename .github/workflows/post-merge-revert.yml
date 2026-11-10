@@ -10,6 +10,10 @@
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
 # The runs are read with the run's own token (actions: read, as post-merge-alert.yml does): the App has no Actions permission. A failure anywhere in the
 # decision raises the alert and fails the job, so a red main is never silent.
+# The commit to revert is the first red of the contiguous red streak on main (every parent whose run was not green, up to the first green run): a later red commit only
+# alerts, a cancelled, skipped or unfinished run is unknown and never green (an unknown first commit alerts and its run is repeated). A transient failure: with `retry: true`
+# the caller also has post-merge-retry.yml (a workflow_run job repeating the failed jobs once, which GitHub refuses from inside the running workflow); the first attempt then
+# only alerts and the repeat decides. The alert issue of one title is reused: the repeat comments on it, post-merge-green closes it.
 # No gh binary on the runner: plain HTTPS to the API. The revert is GitHub's own revertPullRequest mutation, made by the App cocreiamo-claude-code-pr. Never reverted: a
 # revert, a PR of any bot (Renovate included), a commit with no PR, a commit main has already moved past (unless the caller passes moved-ok), a commit whose
 # revert is already open, a commit after which a later run of the same workflow on main succeeded, or a run that succeeded on the head of main (main is green again); the first three still raise the alert. dry-run does everything except write. A revert PR that is already open when main turns green is closed by post-merge-green.yml.
@@ -35,6 +39,10 @@ on:
         description: judge a commit main has moved past (live verification, where no newer run would blame it)
         type: boolean
         default: false
+      retry:
+        description: the caller repeats the failed jobs once through post-merge-retry.yml; the first attempt then only alerts and the repeat decides
+        type: boolean
+        default: false
       assignee:
         type: string
         default: iambilotta
@@ -47,7 +55,7 @@ jobs:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 10
     permissions:
-      actions: read
+      actions: write
     steps:
       - id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -68,11 +76,14 @@ jobs:
           ASSIGNEE: ${{ inputs.assignee }}
           DRY_RUN: ${{ inputs.dry-run }}
           MOVED_OK: ${{ inputs.moved-ok }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RETRY: ${{ inputs.retry }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
             import json, os, re, sys, urllib.error, urllib.request
 
             API = os.environ.get("API_URL", "https://api.github.com")
+            MAX_STREAK = 30
 
             def call(method, path, body=None, token="GH_TOKEN"):
                 req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
@@ -94,14 +105,20 @@ jobs:
                 return out["data"]
 
             def decide(f):
+                first = f["first"]
                 if f.get("head_green"):
                     return {"action": "skip", "reason": "main is green at its head: nothing is red to revert"}
                 if f.get("green_after"):
                     return {"action": "skip", "reason": "main is green again: a later run of the same workflow succeeded after this commit"}
-                if f["head_sha"] != f["sha"] and not f["moved_ok"]:
-                    return {"action": "skip", "reason": "main has moved on: the run of the newer commit decides"}
                 if f["open_revert"]:
-                    return {"action": "skip", "reason": "a revert of this commit is already open"}
+                    return {"action": "skip", "reason": "a revert of the first red commit is already open"}
+                if first["sha"] != f["sha"]:
+                    if f["head_sha"] != f["sha"] and not f["moved_ok"]:
+                        return {"action": "skip", "reason": "main has moved on: the run of the newer commit decides"}
+                    if first["known_red"]:
+                        return {"action": "alert", "reason": "main has been red since %s: that commit is the one reverted, never a later one" % first["sha"][:12]}
+                    return {"action": "alert", "reason": "main has been red since %s, whose own run is %s: a human looks, its run is repeated" % (first["sha"][:12], first["conclusion"] or "missing"),
+                            "rerun": first["run_id"] if first["rerunnable"] else None}
                 pr = f["pr"]
                 title = f["commit_title"].lower()
                 if title.startswith("revert") or (pr and (pr["head_ref"].startswith("revert") or pr["title"].lower().startswith("revert"))):
@@ -110,46 +127,71 @@ jobs:
                     return {"action": "alert", "reason": "no pull request behind the commit: nothing to revert"}
                 if pr["author"].endswith("[bot]") or pr["head_ref"].startswith("renovate/"):
                     return {"action": "alert", "reason": "a bot PR is never reverted automatically"}
-                return {"action": "revert", "reason": "the merge commit is the head of main and its PR is a human one"}
+                return {"action": "revert", "reason": "the first red commit of the streak (its parent run was green) and its PR is a human one"}
 
-            def green_after(repo, run_url):
+            def push_runs(repo, run_url):
+                m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
+                if not m:
+                    return None, []
+                try:
+                    this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)), "READ_TOKEN")
+                    return this, api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&per_page=100" % (repo, this["workflow_id"]), "READ_TOKEN")["workflow_runs"]
+                except RuntimeError as e:
+                    print("runs unreadable, main is not assumed green: %s" % e, file=sys.stderr)
+                    return None, []
+
+            def green_after(this, runs):
                 # A later green run on main means the red was fixed or transient: a revert now would undo good work.
-                m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
-                if not m:
-                    return False
-                try:
-                    this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)), "READ_TOKEN")
-                    runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]), "READ_TOKEN")["workflow_runs"]
-                except RuntimeError as e:
-                    print("runs unreadable, main is not assumed green: %s" % e, file=sys.stderr)
-                    return False
-                return any(r["conclusion"] == "success" and r["created_at"] > this["created_at"] for r in runs)
+                return bool(this) and any(r["conclusion"] == "success" and r["created_at"] > this["created_at"] for r in runs)
 
-            def head_green(repo, run_url, head):
+            def head_green(runs, head):
                 # Opening a revert needs main to be red where it is now: a run of the same workflow that succeeded on the head says it is not.
-                m = re.search(r"/actions/runs/([0-9]+)", run_url or "")
-                if not m:
-                    return False
-                try:
-                    this = api("/repos/%s/actions/runs/%s" % (repo, m.group(1)), "READ_TOKEN")
-                    runs = api("/repos/%s/actions/workflows/%s/runs?branch=main&event=push&status=completed&per_page=30" % (repo, this["workflow_id"]), "READ_TOKEN")["workflow_runs"]
-                except RuntimeError as e:
-                    print("runs unreadable, main is not assumed green: %s" % e, file=sys.stderr)
-                    return False
                 return any(r["conclusion"] == "success" and r.get("head_sha") == head for r in runs)
+
+            def first_red(repo, sha, parents, runs):
+                # Walk back through the first parents of main to the contiguous red streak this commit belongs to. Only a green run ends it: a cancelled,
+                # skipped or unfinished run is unknown, never green. A commit with no run at all gives no evidence and is stepped over.
+                latest = {}
+                for r in runs:
+                    if r.get("head_sha") and (r["head_sha"] not in latest or r["created_at"] > latest[r["head_sha"]]["created_at"]):
+                        latest[r["head_sha"]] = r
+                first = {"sha": sha, "conclusion": "failure", "known_red": True, "run_id": None, "rerunnable": False}
+                for _ in range(MAX_STREAK):
+                    if not parents:
+                        break
+                    sha_p = parents[0]["sha"]
+                    run_p = latest.get(sha_p)
+                    if run_p is not None and run_p["conclusion"] == "success":
+                        break
+                    if run_p is not None:
+                        concl = run_p["conclusion"]
+                        first = {"sha": sha_p, "conclusion": concl, "known_red": concl in ("failure", "timed_out"), "run_id": run_p["id"], "rerunnable": run_p.get("status", "completed") == "completed" and concl not in ("failure", "timed_out")}
+                    parents = api("/repos/%s/commits/%s" % (repo, sha_p))["parents"]
+                return first
 
             def gather(repo, sha, run_url=""):
                 head = api("/repos/%s/git/ref/heads/main" % repo)["object"]["sha"]
-                title = api("/repos/%s/commits/%s" % (repo, sha))["commit"]["message"].split("\n")[0]
+                commit = api("/repos/%s/commits/%s" % (repo, sha))
+                title = commit["commit"]["message"].split("\n")[0]
                 merged = [p for p in api("/repos/%s/commits/%s/pulls" % (repo, sha)) if p.get("merged_at") and p.get("merge_commit_sha") == sha]
                 pr = None
                 if merged:
                     p = merged[0]
                     pr = {"number": p["number"], "title": p["title"], "head_ref": p["head"]["ref"], "author": p["user"]["login"], "node_id": p["node_id"]}
-                marker = "<!-- post-merge-revert:%s -->" % sha
+                this, runs = push_runs(repo, run_url)
+                first = first_red(repo, sha, commit.get("parents", []), runs)
+                marker = "<!-- post-merge-revert:%s -->" % first["sha"]
                 opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
                 return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened),
-                        "green_after": green_after(repo, run_url), "head_green": head_green(repo, run_url, head)}
+                        "green_after": green_after(this, runs), "head_green": head_green(runs, head), "first": first}
+
+            def rerun(repo, run_id):
+                try:
+                    call("POST", "/repos/%s/actions/runs/%s/rerun-failed-jobs" % (repo, run_id), token="READ_TOKEN")
+                except RuntimeError as e:
+                    print("run %s could not be repeated: %s" % (run_id, e), file=sys.stderr)
+                    return False
+                return True
 
             def run(env):
                 repo, sha, dry = env["REPO"], env["SHA"], env["DRY_RUN"] == "true"
@@ -158,6 +200,9 @@ jobs:
                 print("commit %s (%s): %s: %s" % (sha[:12], f["commit_title"], d["action"], d["reason"]))
                 if d["action"] == "skip":
                     return 0
+                if d["action"] == "revert" and env.get("RETRY") == "true" and env.get("RUN_ATTEMPT", "1") == "1":
+                    d = {"action": "alert", "reason": "first attempt: post-merge-retry repeats the failed jobs once, a revert is considered only if the repeat is red too"}
+                    print("%s: %s" % (d["action"], d["reason"]))
                 pr = f["pr"]
                 what = "PR #%d (%s)" % (pr["number"], pr["title"]) if pr else "commit %s" % sha[:12]
                 issue_title = "main is red: %s" % f["commit_title"]
@@ -167,6 +212,8 @@ jobs:
                 ])
                 if dry:
                     print("dry run, would raise the alert issue %r assigned to %s" % (issue_title, env["ASSIGNEE"]))
+                    if d.get("rerun"):
+                        print("dry run, would repeat run %s of the first commit of the streak" % d["rerun"])
                     if d["action"] == "revert":
                         print("dry run, would revert %s as 'revert: %s' with auto-merge, and comment on #%d" % (what, pr["title"], pr["number"]))
                     return 0
@@ -174,9 +221,17 @@ jobs:
                     call("POST", "/repos/%s/labels" % repo, {"name": "main-red", "color": "b60205"})
                 except RuntimeError:
                     pass
-                issue = call("POST", "/repos/%s/issues" % repo, {"title": issue_title, "body": issue_body, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]]})
-                print("alert issue #%d" % issue["number"])
+                known = [i for i in call("GET", "/repos/%s/issues?labels=main-red&state=open&per_page=100" % repo) if i["title"] == issue_title and "pull_request" not in i]
+                if known:
+                    issue = known[0]
+                    call("POST", "/repos/%s/issues/%d/comments" % (repo, issue["number"]), {"body": issue_body})
+                    print("alert issue #%d, commented" % issue["number"])
+                else:
+                    issue = call("POST", "/repos/%s/issues" % repo, {"title": issue_title, "body": issue_body, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]]})
+                    print("alert issue #%d" % issue["number"])
                 if d["action"] != "revert":
+                    if d.get("rerun") and rerun(repo, d["rerun"]):
+                        print("the run of the first commit of the streak is repeated: %s" % d["rerun"])
                     return 0
                 body = "\n".join([
                     "Reverts #%d, merged as %s." % (pr["number"], sha),
