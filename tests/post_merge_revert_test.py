@@ -70,20 +70,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif p.endswith("/actions/runs/1"):
             self.reply(200, {"workflow_id": 5, "created_at": "2026-01-02T00:00:00Z"})
         elif "/actions/workflows/5/runs" in p:
-            self.reply(200, {"workflow_runs": SC["runs"]})
+            self.reply(200, {"workflow_runs": SC["runs"] + [{"id": i + 10, "created_at": "2025-12-%02dT00:00:00Z" % (10 + len(SC["chain"]) - i), "conclusion": c, "head_sha": s}
+                                                             for i, (s, c) in enumerate(SC["chain"]) if c != "missing"]})
         elif p.endswith("/pulls") and "/commits/" in p:
-            self.reply(200, [{"number": 12, "title": "feat: add x", "merged_at": "t", "merge_commit_sha": SHA, "node_id": "PR_node",
+            sha = p.split("/commits/")[1].split("/")[0]
+            i = SC["shas"].index(sha) if sha in SC["shas"] else -1
+            n, t, node = (100 + i, "feat: change " + sha[:1], "PR_" + sha[:1]) if i >= 0 else (12, "feat: add x", "PR_node")
+            self.reply(200, [{"number": n, "title": t, "merged_at": "t", "merge_commit_sha": sha, "node_id": node,
                               "head": {"ref": SC["ref"]}, "user": {"login": SC["author"]}}] if SC["pr"] else [])
         elif "/commits/" in p:
-            self.reply(200, {"commit": {"message": "feat: add x (#12)\n\nbody"}})
+            sha = p.split("/commits/")[1]
+            i = SC["shas"].index(sha) if sha in SC["shas"] else -1
+            parents = [{"sha": SC["shas"][i + 1]}] if 0 <= i < len(SC["shas"]) - 1 else []
+            self.reply(200, {"commit": {"message": ("feat: change %s (#%d)" % (sha[:1], 100 + i) if i >= 0 else "feat: add x (#12)") + "\n\nbody"}, "parents": parents})
         elif "/pulls?state=open" in p:
-            self.reply(200, [{"number": 99, "body": "<!-- post-merge-revert:" + SHA + " -->"}] if SC["open"] else [])
+            self.reply(200, [{"number": 99, "body": "<!-- post-merge-revert:" + SC["open_for"] + " -->"}] if SC["open"] else [])
         else:
             self.reply(404, {})
 
     def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"]) or 0) or "null")
         LOG.append(("POST", self.path, body))
+        if "/rerun-failed-jobs" in self.path:
+            return self.reply(SC["rerun_status"], {})
         if self.headers["Authorization"] != "Bearer tok":
             return self.reply(401, {})
         if self.path == "/graphql":
@@ -101,13 +110,14 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
-def run(dry=False, **kw):
+def run(dry=False, sha=SHA, attempt="", **kw):
     SC.clear()
-    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": [], "runs_forbidden": False, "ref_fails": False})
+    SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": [], "runs_forbidden": False, "ref_fails": False,
+               "chain": [], "shas": [], "open_for": SHA, "rerun_status": 201})
     SC.update(kw)
     del LOG[:]
     env = {
-        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": SHA,
+        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": sha, "RUN_ATTEMPT": attempt,
         "FAILED": "fast, slow-lint", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
         "DRY_RUN": "true" if dry else "false",
     }
@@ -181,4 +191,56 @@ check("a failure inside the decision fails the job", r.returncode != 0, True)
 issues = [c for c in calls if c[0] == "POST" and c[1].endswith("/issues")]
 if len(issues) != 1 or "main-red" not in json.dumps(issues) or "revertPullRequest" in json.dumps(calls):
     sys.exit("FAIL: an exception in the decision must raise the alert and revert nothing: " + json.dumps(calls))
+
+G, C, R1, R2 = "1" * 40, "2" * 40, "3" * 40, "4" * 40
+CH = "cocreiamo/x/actions/runs/"
+
+
+def reverted(calls):
+    return [c[2]["variables"]["id"] for c in calls if c[1] == "/graphql" and "revertPullRequest" in c[2]["query"]]
+
+
+def reruns(calls):
+    return [c[1].split("/actions/runs/")[1].split("/")[0] for c in calls if "/rerun-failed-jobs" in c[1]]
+
+
+def chain(*pairs):
+    shas = [s for s, _ in pairs]
+    return {"chain": list(pairs), "shas": shas, "head": shas[0]}
+
+
+# green, cancelled, red, red: the red run of the last commit blames nobody
+r, calls = run(sha=R2, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+check("green, cancelled, red, red: the second red is not reverted", reverted(calls), [])
+check("green, cancelled, red, red: the alert goes out", "main-red" in json.dumps(calls), True)
+check("green, cancelled, red, red: succeeds", r.returncode, 0)
+r, calls = run(sha=R1, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+check("green, cancelled, red: the red after an unverified commit is not reverted", reverted(calls), [])
+r, calls = run(sha=C, **chain((R2, "failure"), (R1, "failure"), (C, "failure"), (G, "success")))
+check("the first red of the streak is reverted even when main moved on", reverted(calls), ["PR_2"])
+r, calls = run(sha=R2, **chain((R2, "failure"), (R1, "success")))
+check("a red after a green commit is reverted", reverted(calls), ["PR_4"])
+
+# the incident of 2026-11-08: first red skipped as main moved on, second cancelled, third red
+r, calls = run(sha=R1, **chain((R2, "failure"), (C, "cancelled"), (R1, "failure"), (G, "success")))
+check("incident: the first red is reverted although two commits followed", reverted(calls), ["PR_3"])
+r, calls = run(sha=R2, **chain((R2, "failure"), (C, "cancelled"), (R1, "failure"), (G, "success")))
+check("incident: the last red is not reverted", reverted(calls), [])
+r, calls = run(sha=R1, open=True, open_for=R1, **chain((R2, "failure"), (C, "cancelled"), (R1, "failure"), (G, "success")))
+check("incident: a revert of the first red already open", reverted(calls), [])
+r, calls = run(sha=C, **chain((C, "failure"), (R1, "in_progress"), (G, "success")))
+check("an unfinished parent run counts as unknown", reverted(calls), [])
+
+# the run is repeated once before it is judged
+r, calls = run(sha=R2, attempt="1", **chain((R2, "failure"), (R1, "success")))
+check("attempt 1: the failed jobs are rerun", reruns(calls), ["1"])
+check("attempt 1: nothing is judged while the rerun is pending", [c for c in calls if c[0] == "POST" and "/rerun" not in c[1]], [])
+r, calls = run(sha=R2, attempt="2", **chain((R2, "failure"), (R1, "success")))
+check("attempt 2: judged, not rerun again", (reruns(calls), reverted(calls)), ([], ["PR_4"]))
+r, calls = run(sha=R2, attempt="1", rerun_status=403, **chain((R2, "failure"), (R1, "success")))
+check("attempt 1, rerun refused: judged anyway", reverted(calls), ["PR_4"])
+r, calls = run(sha=R1, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+check("an unverified first commit is rerun", reruns(calls), ["12"])
+r, calls = run(dry=True, sha=R1, attempt="1", **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+check("a dry run reruns nothing", reruns(calls), [])
 print("python cases ok")
