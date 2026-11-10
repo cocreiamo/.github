@@ -4,10 +4,11 @@
 #   [ -n "${HEAVY_LOCK_HELD:-}" ] || exec <path of this script> "$0" "$@"
 # CI=true: no lock (a job has its own machine). HEAVY_LOCK_HELD marks the lock as held, so a locked task that runs a
 # locked task does not wait for itself. HEAVY_LOCK_TIMEOUT (seconds, default 3600) bounds the wait: it ends with 75.
-# The command is exec'd with the lock descriptor open: the lock lives as long as it or anything it started lives, so a
+# The command runs as a child with the lock descriptor closed, and the lock lives exactly as long as the command: a daemon
+# it leaves behind (a Bazel server) does not keep the workstation reserved. SIGTERM, SIGINT and SIGHUP are passed on to it.
 # HEAVY_LOCK_MIN_FREE_GB (default 10): below that much free space on the filesystem of ${TMPDIR:-/tmp} or of the working directory the
 # command is not started (exit 75, before any wait): a full disk turns every heavy job into a half-written failure.
-# job that is still running keeps the workstation reserved. HEAVY_LOCK_FILE overrides the lock path (tests).
+# HEAVY_LOCK_FILE overrides the lock path (tests).
 set -euo pipefail
 [ "$#" -gt 0 ] || { echo "usage: heavy-lock <command> [args...]" >&2; exit 2; }
 if [ -n "${HEAVY_LOCK_HELD:-}" ] || [ "${CI:-}" = true ]; then
@@ -49,4 +50,16 @@ if ! flock -n 9; then
 fi
 printf '%s\t%s\n' "$$" "$*" > "$holder"
 export HEAVY_LOCK_HELD="$$"
-exec "$@"
+exec 8<&0
+"$@" 0<&8 8<&- 9>&- &
+child=$!
+exec 8<&-
+for sig in TERM INT HUP; do
+  trap 'kill -'"$sig"' "$child" 2> /dev/null || true' "$sig"
+done
+rc=0
+while :; do
+  wait "$child" && rc=0 || rc=$?
+  kill -0 "$child" 2> /dev/null || break
+done
+exit "$rc"
