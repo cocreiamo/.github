@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# workflow-hygiene-check.py (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture workflows: a job
+# with no timeout-minutes, a concurrency group of a push-triggered workflow keyed on the ref alone (queued pushes to main
+# cancel each other) and a `uses:` pinned to the SHA of an annotated tag object (not a commit) are refused; the clean forms pass.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/workflow-hygiene-check.py"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "workflow-hygiene-check.py" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+COMMIT=1111111111111111111111111111111111111111
+TAG=2222222222222222222222222222222222222222
+mkdir -p "$tmp/kinds/acme/tool"
+echo commit > "$tmp/kinds/acme/tool/$COMMIT"
+echo tag > "$tmp/kinds/acme/tool/$TAG"
+export WORKFLOW_HYGIENE_KINDS="$tmp/kinds"
+export WORKFLOW_HYGIENE_OFFLINE=1
+
+# fixture <workflow text>
+fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"; printf '%s\n' "$1" > "$tmp/r/.github/workflows/w.yml"; }
+refused() { # <what> <text in the refusal>
+  if "$check" "$tmp/r" > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted $1"; fi
+  grep -qF "$2" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $1 without saying '$2'"; }
+}
+accepted() { "$check" "$tmp/r" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+wf() { # <concurrency group> <job extra lines> <step uses>
+  printf 'name: x\non:\n  push:\n    branches: [main]\n%s\njobs:\n  j:\n    runs-on: ubuntu-latest\n%s\n    steps:\n      - uses: %s\n' "$1" "$2" "$3"
+}
+GOOD_GROUP='concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}'
+TIMEOUT='    timeout-minutes: 5'
+
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT" "acme/tool@$COMMIT")"
+accepted "a job with a timeout, a sha-keyed group and a commit pin"
+
+fixture "$(wf "$GOOD_GROUP" "" "acme/tool@$COMMIT")"
+refused "a job with no timeout-minutes" "job j: no timeout-minutes"
+
+fixture "$(wf 'concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' "$TIMEOUT" "acme/tool@$COMMIT")"
+refused "a push group keyed on the ref alone" "keyed on the ref"
+
+fixture "$(wf 'concurrency:
+  group: ci-${{ github.ref_name }}' "$TIMEOUT" "acme/tool@$COMMIT")"
+refused "a push group keyed on ref_name" "keyed on the ref"
+
+fixture "$(wf 'concurrency:
+  group: tofu-${{ github.event_name == '"'pull_request'"' && github.ref || github.run_id }}' "$TIMEOUT" "acme/tool@$COMMIT")"
+accepted "a ref key with a run_id fallback"
+
+fixture "$(wf "" "$TIMEOUT
+    concurrency:
+      group: build-\${{ github.ref }}" "acme/tool@$COMMIT")"
+refused "a job-level group keyed on the ref alone" "keyed on the ref"
+
+fixture "name: x
+on:
+  pull_request:
+concurrency:
+  group: \${{ github.workflow }}-\${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: 'true'"
+accepted "a ref-keyed group in a workflow with no push trigger"
+
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT" "acme/tool@$TAG")"
+refused "a pin to an annotated tag object" "annotated tag object"
+
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT" "acme/tool@v1")"
+accepted "a tag name, which the pin rules of the repository judge"
+
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT" "./.github/actions/x")"
+accepted "a local action"
+
+fixture "name: x
+on: push
+jobs:
+  call:
+    uses: acme/tool/.github/workflows/w.yml@$TAG"
+refused "a reusable workflow pinned to a tag object" "annotated tag object"
+echo "a job without timeout, a ref-keyed push group and a tag-object pin are refused"
