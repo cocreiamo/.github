@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# heavy-lock: two concurrent runs serialize and the waiter names the holder, a nested run does not deadlock, CI=true bypasses the lock, a wait that outlasts its budget exits 75 with a message, the exit code of the command is kept.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+lock="$repo/shared/scripts/heavy-lock"
+[ ! -f "$repo/.github/shared-scripts" ] || lock="$repo/$(awk '$1 == "heavy-lock" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+export HEAVY_LOCK_FILE="$tmp/heavy.lock"
+unset HEAVY_LOCK_HELD
+fails=0
+fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
+
+# serialize: B starts while A holds the lock; B must begin after A ends and must say who holds the lock.
+CI='' "$lock" bash -c 'echo a-start >> "$0"; sleep 3; echo a-end >> "$0"' "$tmp/order" &
+a=$!
+sleep 1
+CI='' "$lock" bash -c 'echo b-start >> "$0"; echo b-end >> "$0"' "$tmp/order" 2> "$tmp/b.err"
+wait "$a"
+[ "$(tr '\n' ' ' < "$tmp/order")" = "a-start a-end b-start b-end " ] || fail "runs did not serialize: $(tr '\n' ' ' < "$tmp/order")"
+grep -q 'waiting' "$tmp/b.err" || fail "the waiter did not say it waits"
+grep -q "held by pid $a" "$tmp/b.err" || fail "the waiter did not name the holder pid $a: $(cat "$tmp/b.err")"
+grep -q 'sleep 3' "$tmp/b.err" || fail "the waiter did not name the holder command: $(cat "$tmp/b.err")"
+
+# nested: a locked command that runs a locked command finishes instead of waiting for itself.
+inner='"$0" true && echo nested-ok'
+out=$(CI='' timeout 20 "$lock" bash -c "$inner" "$lock") || fail "a nested run deadlocked or failed"
+[ "$out" = nested-ok ] || fail "nested run printed '$out'"
+
+# CI=true: no lock at all, so a held lock does not matter.
+CI='' "$lock" sleep 6 &
+h=$!
+sleep 1
+out=$(CI=true timeout 3 "$lock" echo ci-ran) || fail "CI=true waited for the lock"
+[ "$out" = ci-ran ] || fail "CI=true printed '$out'"
+
+# bounded wait: still held by the sleep above, a 2 s budget ends with 75 and a message.
+rc=0
+CI='' HEAVY_LOCK_TIMEOUT=2 "$lock" echo never 2> "$tmp/t.err" > "$tmp/t.out" || rc=$?
+[ "$rc" = 75 ] || fail "a wait over its budget exited $rc, not 75"
+grep -q 'gave up' "$tmp/t.err" || fail "no message when the budget ends: $(cat "$tmp/t.err")"
+[ ! -s "$tmp/t.out" ] || fail "the command ran although the lock was not taken"
+wait "$h"
+
+# exit code and arguments pass through; a free lock is taken silently.
+rc=0
+CI='' "$lock" bash -c 'exit 7' 2> "$tmp/q.err" || rc=$?
+[ "$rc" = 7 ] || fail "exit code $rc, not 7"
+[ ! -s "$tmp/q.err" ] || fail "a free lock printed: $(cat "$tmp/q.err")"
+[ "$(CI='' "$lock" printf '%s|' 'a b' c)" = "a b|c|" ] || fail "arguments were altered"
+
+[ "$fails" = 0 ] || exit 1
+echo "heavy-lock: ok"
