@@ -4,7 +4,7 @@
 #   post-merge:
 #     needs: [<the required jobs>]
 #     if: ${{ always() && github.event_name == 'push' && contains(needs.*.result, 'failure') }}
-#     permissions: {actions: read}
+#     permissions: {actions: read, issues: write}
 #     uses: cocreiamo/.github/.github/workflows/post-merge-revert.yml@<sha>
 #     with: {failed: "<names of the jobs>", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
@@ -60,8 +60,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: write
+      issues: write
     steps:
       - id: token
+        continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ inputs.app-id }}
@@ -71,6 +73,7 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
       - name: decide and act
+        if: steps.token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           READ_TOKEN: ${{ github.token }}
@@ -276,4 +279,43 @@ jobs:
 
             if __name__ == "__main__":
                 sys.exit(main(os.environ))
+        run: python3 -I -c "$SCRIPT"
+      - name: alert without the App
+        if: steps.token.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha || github.sha }}
+          FAILED: ${{ inputs.failed }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SCRIPT: |
+            import json, os, sys, urllib.error, urllib.request
+
+            API = os.environ.get("API_URL", "https://api.github.com")
+
+            def call(method, path, body=None):
+                req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
+                    "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        raw = r.read()
+                except urllib.error.HTTPError as e:
+                    raise RuntimeError("%s %s: %s %s" % (method, path, e.code, e.read()[:200].decode(errors="replace")))
+                return json.loads(raw) if raw else None
+
+            env = os.environ
+            body = "\n".join(["The required job(s) %s failed on %s on main: %s" % (env["FAILED"], env["SHA"], env["RUN_URL"]), "",
+                              "The App token could not be minted (key revoked or expired, or a permission lost): no revert was attempted, a human looks."])
+            try:
+                call("POST", "/repos/%s/labels" % env["REPO"], {"name": "main-red", "color": "b60205"})
+            except RuntimeError:
+                pass
+            title = "main is red: %s" % env["SHA"][:12]
+            known = [i for i in call("GET", "/repos/%s/issues?labels=main-red&state=open&per_page=100" % env["REPO"]) if i["title"] == title and "pull_request" not in i]
+            if known:
+                call("POST", "/repos/%s/issues/%d/comments" % (env["REPO"], known[0]["number"]), {"body": body})
+            else:
+                call("POST", "/repos/%s/issues" % env["REPO"], {"title": title, "labels": ["main-red"], "assignees": [env["ASSIGNEE"]], "body": body})
+            sys.exit(1)
         run: python3 -I -c "$SCRIPT"
