@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. Run after every merge and at session start."
+# --orphans runs only what needs no git and no gh, in any directory: the Bazel orphan sweep and the expiry of archives; it combines with --dry-run. workstation:trim runs it daily.
+# Archives (<archive dir>/<repo>/<date>/*.{uncommitted.patch,untracked.tgz,bundle}) older than WT_ARCHIVE_DAYS (default 30) are deleted by every run, and the date directories they leave empty.
 # --dry-run (-n) changes nothing: it prints "would remove|archive|delete" for what a real run does.
 # Stale = last commit, branch update and last file change in the worktree all older than WT_GC_STALE_HOURS (default 24).
 # Archive: $WT_GC_ARCHIVE_DIR (default ~/workspaces/archive)/<repo>/<date>/<branch>.{uncommitted.patch,untracked.tgz,bundle}; nothing is removed unless every archive step succeeded.
@@ -9,22 +11,26 @@
 # Remote branches: deleted only when the PR is closed unmerged, the tip is the one the PR closed with and it is stale; GitHub keeps the PR and its "Restore branch". Without any PR or younger: report-only.
 set -euo pipefail
 
-dry=false
-case "${1:-}" in
-  --dry-run | -n) dry=true ;;
-  "") ;;
-  *) echo "refused: usage is wt:gc [--dry-run]" >&2; exit 2 ;;
-esac
+dry=false orphans_only=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run | -n) dry=true ;;
+    --orphans) orphans_only=true ;;
+    *) echo "refused: usage is wt:gc [--dry-run] [--orphans]" >&2; exit 2 ;;
+  esac
+done
 
 # The worktree being removed may be the current directory, which git cannot work from afterwards.
-cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+[ "$orphans_only" = true ] || cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 stale_hours="${WT_GC_STALE_HOURS:-24}"
 case "$stale_hours" in "" | *[!0-9]*) echo "refused: WT_GC_STALE_HOURS must be a whole number of hours" >&2; exit 2 ;; esac
 bazel_root="${WT_GC_BAZEL_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/bazel/_bazel_${USER:-$(id -un)}}"
+archive_days="${WT_ARCHIVE_DAYS:-30}"
+case "$archive_days" in "" | *[!0-9]*) echo "refused: WT_ARCHIVE_DAYS must be a whole number of days" >&2; exit 2 ;; esac
 archive_root="${WT_GC_ARCHIVE_DIR:-$HOME/workspaces/archive}"
 now="$(date +%s)"
 repo_name="$(basename "$PWD")"
-git fetch -q --prune origin || echo "warning: git fetch failed, remote branches may be stale"
+[ "$orphans_only" = true ] || git fetch -q --prune origin || echo "warning: git fetch failed, remote branches may be stale"
 
 # Rows "head number STATE oid" of the PRs; the awk filters in the callers keep the fake gh of the tests trivial.
 prs() { gh pr list "$@" --json headRefName,number,state,headRefOid --jq '.[] | "\(.headRefName) \(.number) \(.state) \(.headRefOid)"'; }
@@ -158,6 +164,45 @@ archive() {
   rmdir "$dir" 2> /dev/null || true
   printf '%s\n' "${made[@]}"
 }
+
+# Output bases whose workspace is gone (a removed worktree, a deleted checkout): the install base, the disk cache and the
+# repository cache are not output bases and are never looked at.
+sweep_orphans() {
+  if [ -d "$bazel_root" ]; then
+    for dir in "$bazel_root"/*; do
+      case "${dir##*/}" in *[!0-9a-f]* | "") continue ;; esac
+      [ "${#dir}" -eq $((${#bazel_root} + 33)) ] && [ -f "$dir/DO_NOT_BUILD_HERE" ] || continue
+      ws="$(cat "$dir/DO_NOT_BUILD_HERE")"
+      [ -n "$ws" ] && [ ! -e "$ws" ] || continue
+      if [ -n "$(bazel_server_of "$dir")" ]; then
+        echo "skip   Bazel output base $dir: workspace $ws is gone but its server is still running"
+      elif [ "$dry" = true ]; then
+        echo "would remove Bazel output base $dir ($(bazel_size "$dir")) (orphan: workspace $ws is gone)"
+      else
+        bazel_purge "$dir" "orphan: workspace $ws is gone"
+      fi
+    done
+  fi
+}
+
+expire_archives() {
+  local f
+  [ -d "$archive_root" ] || return 0
+  while IFS= read -r -d '' f; do
+    if [ "$dry" = true ]; then
+      echo "would remove archive $f (older than ${archive_days} days)"
+    elif rm -f "$f"; then
+      echo "removed archive $f (older than ${archive_days} days)"
+      rmdir "$(dirname "$f")" 2> /dev/null || true
+    fi
+  done < <(find "$archive_root" -mindepth 3 -maxdepth 3 -type f \( -name '*.uncommitted.patch' -o -name '*.untracked.tgz' -o -name '*.bundle' \) -mmin "+$((archive_days * 1440))" -print0 2> /dev/null)
+}
+
+if [ "$orphans_only" = true ]; then
+  sweep_orphans
+  expire_archives
+  exit 0
+fi
 
 report=()
 main_dir="$PWD"
@@ -306,24 +351,9 @@ while IFS= read -r branch; do
   esac
 done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin)
 
-# Output bases whose workspace is gone (a removed worktree, a deleted checkout): the install base, the disk cache and the
-# repository cache are not output bases and are never looked at.
-if [ -d "$bazel_root" ]; then
-  for dir in "$bazel_root"/*; do
-    case "${dir##*/}" in *[!0-9a-f]* | "") continue ;; esac
-    [ "${#dir}" -eq $((${#bazel_root} + 33)) ] && [ -f "$dir/DO_NOT_BUILD_HERE" ] || continue
-    ws="$(cat "$dir/DO_NOT_BUILD_HERE")"
-    [ -n "$ws" ] && [ ! -e "$ws" ] || continue
-    if [ -n "$(bazel_server_of "$dir")" ]; then
-      echo "skip   Bazel output base $dir: workspace $ws is gone but its server is still running"
-    elif [ "$dry" = true ]; then
-      echo "would remove Bazel output base $dir ($(bazel_size "$dir")) (orphan: workspace $ws is gone)"
-    else
-      bazel_purge "$dir" "orphan: workspace $ws is gone"
-    fi
-  done
-fi
+sweep_orphans
 
+expire_archives
 [ "$dry" = true ] || git worktree prune
 if [ "${#report[@]}" -gt 0 ]; then
   echo
