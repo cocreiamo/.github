@@ -1,0 +1,22 @@
+# The serial merge queue of this repository: the ruleset of main requires up-to-date branches and merge-queue.yml brings one ready PR at a time up to date.
+name: merge-queue-run
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [auto_merge_enabled]
+  # Runs nothing of the PR: the reusable checks out no code and only reads the API and updates a branch.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [check]
+    types: [completed]
+concurrency:
+  group: merge-queue
+permissions: {}
+jobs:
+  queue:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request' }}
+    uses: ./.github/workflows/merge-queue.yml # zizmor: ignore[self-repository]  the version on main is the one to run
+    with:
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}

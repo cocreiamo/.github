@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#MISE description="Every shell script that calls mktemp installs an EXIT trap that removes what it made (allowlist: .github/mktemp-trap-allowlist; a path ending in / allowlists a directory)"
+# mktemp-trap-check [repository root]: every shell script (a file whose first line is a bash/sh/env shebang, or *.sh) that calls mktemp (not -u) must
+# install `trap '<something that runs rm>' EXIT`: a test that leaves its tmp.* directory behind is a leak that grows until the disk is full.
+# Allowlist: <root>/.github/mktemp-trap-allowlist, one line per script, or per directory when the path ends in "/": "<path> <reason>" (a line without a reason is refused).
+# Prints the offenders and their count; exits 1 when there is one. Files come from `git ls-files` in a checkout, else from find.
+set -euo pipefail
+root="$(cd "${1:-.}" && pwd)"
+cd "$root"
+allow="$root/.github/mktemp-trap-allowlist"
+declare -A allowed=()
+prefixes=()
+bad=0
+if [ -f "$allow" ]; then
+  while IFS= read -r line; do
+    case "$line" in "" | "#"*) continue ;; esac
+    path="${line%% *}"
+    reason="${line#"$path"}"
+    reason="${reason# }"
+    if [ -z "$reason" ]; then
+      echo "mktemp-trap-check: $allow: '$path' has no reason" >&2
+      bad=1
+    fi
+    case "$path" in */) prefixes+=("$path") ;; *) allowed["$path"]=1 ;; esac
+  done < "$allow"
+fi
+
+if [ -e .git ]; then files() { git ls-files -z; }; else files() { find . -type f -not -path './.git/*' -print0 | sed -z 's|^\./||'; }; fi
+
+offenders=()
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  head -c 200 "$f" 2> /dev/null | head -n 1 | grep -qE '^#!.*(bash|/sh|env sh|zsh)' || case "$f" in *.sh) ;; *) continue ;; esac
+  grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mkte[m]p([[:space:]]|$|\))' | grep -qvE 'mkte[m]p[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
+  [ -z "${allowed[$f]:-}" ] || continue
+  skip=0
+  for p in "${prefixes[@]}"; do case "$f" in "$p"*) skip=1 ;; esac; done
+  [ "$skip" = 0 ] || continue
+  trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || true)"
+  if [ -n "$trap_lines" ]; then
+    grep -qE '\brm\b|cleanup|rmdir' <<< "$trap_lines" && continue
+    grep -qE '(^|[;&[:space:]])rm[[:space:]]+-' "$f" && continue
+  fi
+  offenders+=("$f")
+done < <(files)
+
+if [ "${#offenders[@]}" -gt 0 ]; then
+  printf 'mktemp-trap-check: %s\n' "${offenders[@]}" >&2
+  echo "mktemp-trap-check: ${#offenders[@]} script(s) make temporary files without an EXIT trap that removes them (add the trap, or an allowlist line with a reason in .github/mktemp-trap-allowlist)" >&2
+  exit 1
+fi
+[ "$bad" = 0 ] || exit 1
+echo "mktemp-trap-check: every script that makes temporary files cleans up on EXIT"

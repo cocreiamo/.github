@@ -15,7 +15,7 @@ jobs:
     permissions:
       pull-requests: read
     uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
-  check:
+  lint:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 10
     steps:
@@ -36,6 +36,8 @@ jobs:
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
       - run: bash tests/light-jobs.sh
+      - run: bash tests/ci-aggregator.sh
+      - run: bash tests/merge-queue.sh
       - run: bash tests/post-merge-revert.sh
       - run: bash tests/post-merge-retry.sh
       - run: bash tests/post-merge-green.sh
@@ -53,11 +55,24 @@ jobs:
       - run: bash tests/testlib.sh
       - run: bash tests/stalled-prs.sh
       - run: bash tests/pr-wait.sh
+      - run: bash tests/heavy-lock.sh
       - run: bash tests/claude-pre-bash.sh
       - run: bash tests/workflow-pins.sh
       - run: bash tests/workflow-tools.sh
       - run: bash tests/workflow-hygiene.sh
+      - run: shared/scripts/mktemp-trap-check
+      - run: bash tests/mktemp-trap.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/renovate-reusable.sh
       - run: bash tests/sync-founder-section.sh
+  ci:
+    needs: [title, lint]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: [self-hosted, cocreiamo-ci-light]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
