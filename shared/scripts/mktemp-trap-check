@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # mktemp-trap-check [repository root]: every shell script (a file whose first line is a bash/sh/env shebang, or *.sh) that calls mktemp (not -u) must
 # install `trap '<something that runs rm>' EXIT`: a test that leaves its tmp.* directory behind is a leak that grows until the disk is full.
-# Allowlist: <root>/.github/mktemp-trap-allowlist, one line per script: "<path> <reason>" (a line without a reason is refused).
+# Allowlist: <root>/.github/mktemp-trap-allowlist, one line per script, or per directory when the path ends in "/": "<path> <reason>" (a line without a reason is refused).
 # Prints the offenders and their count; exits 1 when there is one. Files come from `git ls-files` in a checkout, else from find.
 set -euo pipefail
 root="$(cd "${1:-.}" && pwd)"
 cd "$root"
 allow="$root/.github/mktemp-trap-allowlist"
 declare -A allowed=()
+prefixes=()
 bad=0
 if [ -f "$allow" ]; then
   while IFS= read -r line; do
@@ -19,7 +20,7 @@ if [ -f "$allow" ]; then
       echo "mktemp-trap-check: $allow: '$path' has no reason" >&2
       bad=1
     fi
-    allowed["$path"]=1
+    case "$path" in */) prefixes+=("$path") ;; *) allowed["$path"]=1 ;; esac
   done < "$allow"
 fi
 
@@ -31,6 +32,9 @@ while IFS= read -r -d '' f; do
   head -c 200 "$f" 2> /dev/null | head -n 1 | grep -qE '^#!.*(bash|/sh|env sh|zsh)' || case "$f" in *.sh) ;; *) continue ;; esac
   grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mkte[m]p([[:space:]]|$|\))' | grep -qvE 'mkte[m]p[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
   [ -z "${allowed[$f]:-}" ] || continue
+  skip=0
+  for p in "${prefixes[@]}"; do case "$f" in "$p"*) skip=1 ;; esac; done
+  [ "$skip" = 0 ] || continue
   trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || true)"
   if [ -n "$trap_lines" ]; then
     grep -qE '\brm\b|cleanup|rmdir' <<< "$trap_lines" && continue

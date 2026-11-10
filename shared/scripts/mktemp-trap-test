@@ -54,4 +54,14 @@ fixture
 cp "$check" "$tmp/r/tools/mktemp-trap-check"
 accepted "the check itself (its own messages name the command)"
 
+fixture
+mkdir -p "$tmp/r/vendor/up"
+put vendor/up/configure 'tmp="$(mktemp -d)"'
+put tools/leaky 'tmp="$(mktemp -d)"'
+printf 'vendor/up/ vendored upstream\n' > "$tmp/r/.github/mktemp-trap-allowlist"
+refused "a leak outside an allowlisted directory" "tools/leaky"
+grep -qF "vendor/up" "$tmp/out" && fail "a directory allowlist line did not exclude vendor/up: $(cat "$tmp/out")"
+rm "$tmp/r/tools/leaky"
+accepted "an allowlisted directory"
+
 echo "mktemp-trap-check: ok"
