@@ -8,7 +8,7 @@ on:
 permissions: {}
 jobs:
   check:
-    runs-on: [self-hosted, cocreiamo-ci-light]
+    runs-on: ${{ fromJSON(vars.LIGHT_RUNNER || '["self-hosted","cocreiamo-ci-light"]') }}
     timeout-minutes: 2
     permissions:
       pull-requests: read
