@@ -1,0 +1,7 @@
+id: dotgithub/test/stalled-prs.sh
+repo: dotgithub
+invariant: The nightly list of stalled pull requests is one script and one reusable workflow for every repository, and the workflow runs the script byte for byte.
+runs:
+- pr-ci
+command: bash tests/stalled-prs.sh
+file: tests/stalled-prs.sh
