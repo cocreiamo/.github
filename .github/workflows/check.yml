@@ -49,6 +49,7 @@ jobs:
       - run: bash tests/worktrees.sh
       - run: bash tests/pr-template.sh
       - run: bash tests/pins-consistent.sh
+      - run: bash tests/testlib.sh
       - run: bash tests/pr-wait.sh
       - run: bash tests/claude-pre-bash.sh
       - run: bash tests/workflow-pins.sh

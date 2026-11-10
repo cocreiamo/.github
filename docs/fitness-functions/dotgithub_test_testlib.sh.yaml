@@ -1,0 +1,7 @@
+id: dotgithub/test/testlib.sh
+repo: dotgithub
+invariant: The shared test library gives every test the same fail, tmpdir, stub_bin and fake_gh, so no test carries its own copy.
+runs:
+- pr-ci
+command: bash tests/testlib.sh
+file: tests/testlib.sh

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # hooks/check-conflict-markers on a throwaway repository: a file with git's conflict markers is refused, a clean file and a lone ======= line pass.
 set -euo pipefail
+# shellcheck source=../shared/scripts/testlib.sh
+. "$(dirname "$0")/../shared/scripts/testlib.sh"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 check="$repo/hooks/check-conflict-markers"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmpdir
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 

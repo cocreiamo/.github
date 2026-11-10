@@ -2,8 +2,9 @@
 # A reusable workflow that calls the Actions API (runs, jobs, logs) must declare actions: read on the job that does it: the
 # App token has no Actions permission, so the call needs the run's own token, and that token only has what the job declares.
 set -euo pipefail
+# shellcheck source=../shared/scripts/testlib.sh
+. "$(dirname "$0")/../shared/scripts/testlib.sh"
 cd "$(dirname "$0")/.."
-fail() { echo "FAIL: $*" >&2; exit 1; }
 
 scan() {
   local dir="$1" f bad=0
@@ -23,7 +24,7 @@ scan() {
 
 scan .github/workflows || fail "a reusable workflow calls the Actions API without declaring actions: read"
 
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tmpdir
 cat > "$tmp/bad.yml" <<'Y'
 on:
   workflow_call: {}
