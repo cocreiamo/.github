@@ -1,37 +1,97 @@
+# Reusable: self-hosted Renovate for the calling repository, authenticated as the GitHub App cocreiamo-claude-code-pr
+# (variable CLAUDE_CODE_PR_APP_ID of the caller, secret CLAUDE_CODE_PR_APP_PRIVATE_KEY passed as app-private-key). The token reaches
+# the caller and cocreiamo/.github (the preset and the reusable workflows, both private), plus the repositories input. A caller adds:
+#   on: {schedule: [{cron: "17 2 * * *"}], workflow_dispatch: {}}
+#   concurrency: {group: renovate}
+#   jobs:
+#     renovate:
+#       permissions: {contents: read, actions: read}
+#       uses: cocreiamo/.github/.github/workflows/renovate.yml@<sha>
+#       with: {repositories: "", extra-env: "{}", alert: true}
+#       secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}", extra-env-secret: "{}"}
+# Inputs and secrets other than app-private-key are optional. extra-env and extra-env-secret are JSON objects of RENOVATE_ variables
+# (extra-env-secret for values that are secrets, such as RENOVATE_HOST_RULES); a variable this workflow sets itself is refused.
+# With alert: true a failed run opens the issue «main is red: renovate failed» through post-merge-alert.yml (needs actions: read).
 name: renovate
-
-# Self-hosted Renovate, nightly (Europe/Rome 03:17-04:17), authenticated as the existing GitHub App
-# cocreiamo-claude-code-pr (variable CLAUDE_CODE_PR_APP_ID, secret CLAUDE_CODE_PR_APP_PRIVATE_KEY). The token is
-# scoped to this repository and to cocreiamo/.github (the preset and the reusable workflows, both private).
 on:
-  schedule:
-    - cron: "17 2 * * *"
-  workflow_dispatch:
-
-concurrency:
-  group: renovate
-
-permissions:
-  contents: read
-
+  workflow_call:
+    inputs:
+      repositories:
+        description: other repositories (comma separated names of the organization) the token must reach, besides the caller and .github
+        type: string
+        default: ""
+      extra-env:
+        description: JSON object of extra RENOVATE_ variables (not secret)
+        type: string
+        default: ""
+      alert:
+        description: raise an issue when the run fails
+        type: boolean
+        default: true
+    secrets:
+      app-private-key:
+        required: true
+      extra-env-secret:
+        description: JSON object of extra RENOVATE_ variables whose values are secrets
+        required: false
+permissions: {}
 jobs:
   renovate:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
+      - id: repos
+        env:
+          EXTRA: ${{ inputs.repositories }}
+        run: |
+          list=".github,${GITHUB_REPOSITORY#*/}"
+          [ -z "$EXTRA" ] || list="$list,$EXTRA"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
-          private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
+          private-key: ${{ secrets.app-private-key }}
           owner: cocreiamo
-          repositories: .github
+          repositories: ${{ steps.repos.outputs.list }}
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
           permission-workflows: write
           permission-statuses: read
           permission-checks: read
+      - name: extra environment
+        env:
+          EXTRA_ENV: ${{ inputs.extra-env }}
+          EXTRA_ENV_SECRET: ${{ secrets.extra-env-secret }}
+          SCRIPT: |
+            import json, os, re, secrets, sys
+            RESERVED = {"RENOVATE_TOKEN", "RENOVATE_REPOSITORIES", "RENOVATE_ONBOARDING", "RENOVATE_REQUIRE_CONFIG",
+                        "RENOVATE_EXPOSE_ALL_ENV", "RENOVATE_ALLOWED_COMMANDS"}
+            out = []
+            for name in ("EXTRA_ENV", "EXTRA_ENV_SECRET"):
+                raw = os.environ.get(name, "").strip()
+                if not raw:
+                    continue
+                try:
+                    doc = json.loads(raw)
+                except ValueError:
+                    sys.exit(f"::error::{name} is not JSON")
+                if not isinstance(doc, dict):
+                    sys.exit(f"::error::{name} must be a JSON object")
+                for key, value in doc.items():
+                    if not re.fullmatch(r"RENOVATE_[A-Z0-9_]+", key) or key in RESERVED:
+                        sys.exit(f"::error::{name} sets {key!r}: only RENOVATE_ variables the workflow does not set itself are allowed")
+                    if not isinstance(value, str):
+                        sys.exit(f"::error::{name}: the value of {key} must be a string")
+                    out.append((key, value))
+            with open(os.environ["GITHUB_ENV"], "a") as env:
+                for key, value in out:
+                    delimiter = "EOF_" + secrets.token_hex(16)
+                    env.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+        run: python3 -I -c "$SCRIPT"
       - uses: renovatebot/github-action@266fef21329c44765ad42f9dea1f01f5d2d91084 # v46.3.13
         with:
           token: ${{ steps.token.outputs.token }}
@@ -47,3 +107,14 @@ jobs:
           # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; nothing else may run.
           RENOVATE_EXPOSE_ALL_ENV: "true"
           RENOVATE_ALLOWED_COMMANDS: '["^bash -c ''curl -fsSL -H \"Authorization: Bearer [$]RENOVATE_TOKEN\" -H \"Accept: application/vnd[.]github[.]raw\" \"https://api[.]github[.]com/repos/cocreiamo/[.]github/contents/renovate/sync-founder-section[.]sh[?]ref=[0-9a-f]{40}\" [|] bash -s -- [0-9a-f]{40}''$"]'
+  alert:
+    needs: [renovate]
+    if: ${{ always() && inputs.alert && needs.renovate.result == 'failure' }}
+    permissions:
+      actions: read
+    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@4bc3730d445176c5c10c8868338e2cfc0235d653 # main
+    with:
+      failed: "renovate"
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.app-private-key }}

@@ -1,0 +1,22 @@
+name: renovate
+
+# Nightly (Europe/Rome 03:17-04:17) run of the reusable renovate.yml for this repository.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: renovate
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/renovate.yml # zizmor: ignore[self-repository]  this repository runs the version it holds
+    secrets:
+      app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
