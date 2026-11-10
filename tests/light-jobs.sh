@@ -65,9 +65,16 @@ refuse environment 'no environment' "$(printf '%s\n    environment: production' 
 refuse write 'read permissions only' "${light/contents: read/contents: write}" 'a.yml j why'
 refuse mixed 'carries exactly' "${light/\[self-hosted, cocreiamo-ci-light\]/[self-hosted, cocreiamo-ci, cocreiamo-ci-light]}" 'a.yml j why'
 refuse slow 'times out' "${light/timeout-minutes: 2/timeout-minutes: 30}" 'a.yml j why'
+expr='${{ fromJSON(vars.LIGHT_RUNNER || '"'"'"ubuntu-latest"'"'"') }}'
+refuse switchable-unlisted 'not in' "${light/\[self-hosted, cocreiamo-ci-light\]/$expr}" ''
+refuse switchable-secret 'no secret' "$(printf '%s\n      - run: echo ${{ secrets.X }}' "${light/\[self-hosted, cocreiamo-ci-light\]/$expr}")" 'a.yml j why'
+refuse switchable-slow 'times out' "${light/timeout-minutes: 2/timeout-minutes: 30}" 'a.yml j why'
+refuse hosted-variant 'not [self-hosted' "${light/\[self-hosted, cocreiamo-ci-light\]/\${{ vars.LIGHT_RUNNER || 'ubuntu-latest' \}\}}" ''
 refuse noreason 'no reason' "$light" 'a.yml j'
 refuse hosted 'not [self-hosted' "${light/\[self-hosted, cocreiamo-ci-light\]/ubuntu-24.04}" ''
 refuse stale 'not a light job' "${light/-light/}" 'a.yml j why'
 mkdir -p "$w/ok"; printf '%s\n' "$light" > "$w/ok/a.yml"; echo 'a.yml j why' > "$w/ok/list"
 [ -z "$(check "$w/ok" "$w/ok/list")" ] || { echo "FAIL: a listed, clean light job was refused" >&2; exit 1; }
+mkdir -p "$w/ok2"; printf '%s\n' "${light/\[self-hosted, cocreiamo-ci-light\]/$expr}" > "$w/ok2/a.yml"; echo 'a.yml j why' > "$w/ok2/list"
+[ -z "$(check "$w/ok2" "$w/ok2/list")" ] || { echo "FAIL: a listed, clean switchable light job was refused" >&2; exit 1; }
 echo "light-jobs ok"
