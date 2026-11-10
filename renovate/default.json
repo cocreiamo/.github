@@ -53,10 +53,11 @@
       "automergeType": "pr"
     },
     {
-      "description": "Our own reusable workflows follow main: any bump of the pin merges once the checks are green, and the CLAUDE.md and the vendored scripts of the repository are rewritten to the canonical ones of the new pin so that rules / check passes.",
+      "description": "Our own reusable workflows follow main, every ref of a repository in one PR (pins-consistent refuses two SHAs): any bump of the pin merges once the checks are green, and the CLAUDE.md and the vendored scripts of the repository are rewritten to the canonical ones of the new pin so that rules / check passes.",
       "matchManagers": ["github-actions"],
       "matchDepNames": ["cocreiamo/.github"],
-      "groupName": null,
+      "groupName": "cocreiamo/.github pin",
+      "groupSlug": "cocreiamo-github-pin",
       "automerge": true,
       "automergeType": "pr",
       "postUpgradeTasks": {

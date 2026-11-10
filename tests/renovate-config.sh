@@ -26,4 +26,6 @@ for perm in statuses checks; do
   [ "$(yq -N ".jobs.renovate.steps[] | select(.uses == \"actions/create-github-app-token*\") | .with.permission-$perm" .github/workflows/renovate.yml)" = read ] \
     || { echo "FAIL: the token cannot read $perm: Renovate fails with integration-unauthorized when it reads a branch status" >&2; exit 1; }
 done
+jq -e '.packageRules[] | select(.matchDepNames == ["cocreiamo/.github"] and (.groupName | type == "string") and .groupName != "")' renovate/default.json >/dev/null \
+  || { echo "FAIL: every cocreiamo/.github ref of a repository must move in one PR (a named group on the rule for cocreiamo/.github)" >&2; exit 1; }
 echo "renovate-config ok"

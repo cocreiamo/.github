@@ -1,0 +1,45 @@
+#!/usr/bin/env -S python3 -I
+#MISE description="A repository references cocreiamo/.github, and each of actions/checkout, re-actors/alls-green and renovatebot/github-action, at one ref only: fails naming the refs and the files when a workflow or composite action uses two"
+import pathlib
+import re
+import sys
+
+WATCHED = ("cocreiamo/.github", "actions/checkout", "re-actors/alls-green", "renovatebot/github-action")
+USES = re.compile(r"""^\s*(?:-\s+)?uses:\s*['"]?([^@\s'"]+)@([^\s'"#]+)""")
+
+
+def sources(root):
+    wf = root / ".github" / "workflows"
+    for pattern in ("*.yml", "*.yaml"):
+        yield from sorted(wf.glob(pattern))
+    actions = root / ".github" / "actions"
+    for pattern in ("action.yml", "action.yaml"):
+        yield from sorted(actions.rglob(pattern))
+
+
+def main(argv):
+    root = pathlib.Path(argv[1] if len(argv) > 1 else ".")
+    refs = {name: {} for name in WATCHED}
+    for path in sources(root):
+        for line in path.read_text().splitlines():
+            m = USES.match(line)
+            if not m:
+                continue
+            name = "/".join(m.group(1).split("/")[:2])
+            if name in refs:
+                refs[name].setdefault(m.group(2), set()).add(str(path.relative_to(root)))
+    bad = False
+    for name, by_ref in refs.items():
+        if len(by_ref) > 1:
+            bad = True
+            print(f"{name} is referenced at {len(by_ref)} refs; one is allowed (bump them together):", file=sys.stderr)
+            for ref, files in sorted(by_ref.items()):
+                print(f"  {ref}: {', '.join(sorted(files))}", file=sys.stderr)
+    if bad:
+        return 1
+    print("pins-consistent: one ref per watched action and for cocreiamo/.github")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

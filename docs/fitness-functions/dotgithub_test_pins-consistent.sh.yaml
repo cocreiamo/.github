@@ -1,0 +1,7 @@
+id: dotgithub/test/pins-consistent.sh
+repo: dotgithub
+invariant: A repository references cocreiamo/.github, and each watched action, at one SHA only, so a bump never leaves two versions of the shared workflows running side by side.
+runs:
+- pr-ci
+command: bash tests/pins-consistent.sh
+file: tests/pins-consistent.sh
