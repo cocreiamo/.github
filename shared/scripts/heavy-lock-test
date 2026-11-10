@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# heavy-lock: two concurrent runs serialize and the waiter names the holder, a nested run does not deadlock, CI=true bypasses the lock, a wait that outlasts its budget exits 75 with a message, the exit code of the command is kept.
+# heavy-lock: below HEAVY_LOCK_MIN_FREE_GB free on the temp dir or the working dir it refuses with 75 (not under CI=true or nested); two concurrent runs serialize and the waiter names the holder, a nested run does not deadlock, CI=true bypasses the lock, a wait that outlasts its budget exits 75 with a message, the exit code of the command is kept.
 # shellcheck disable=SC2016 # the bash -c bodies are single-quoted on purpose: they expand in the child
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
@@ -49,6 +49,34 @@ CI='' "$lock" bash -c 'exit 7' 2> "$tmp/q.err" || rc=$?
 [ "$rc" = 7 ] || fail "exit code $rc, not 7"
 [ ! -s "$tmp/q.err" ] || fail "a free lock printed: $(cat "$tmp/q.err")"
 [ "$(CI='' "$lock" printf '%s|' 'a b' c)" = "a b|c|" ] || fail "arguments were altered"
+
+# free space: a full disk (df stub) refuses with 75 and a message, for the temp dir and for the working dir alike; a disk with room, a
+# lowered threshold, CI=true and a nested run all pass.
+mkdir -p "$tmp/bin" "$tmp/full" "$tmp/roomy"
+cat > "$tmp/bin/df" <<'DF'
+#!/usr/bin/env bash
+case "${!#}" in
+  "$DF_FULL"*) kb=${DF_FULL_KB:-1048576} ;;
+  *) kb=${DF_OTHER_KB:-999999999} ;;
+esac
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/x 2000000000 1 %s 1%% /\n' "$kb"
+DF
+chmod +x "$tmp/bin/df"
+rc=0
+(cd "$tmp/roomy" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" CI='' "$lock" echo never > "$tmp/f.out" 2> "$tmp/f.err") || rc=$?
+[ "$rc" = 75 ] || fail "a full temp dir exited $rc, not 75"
+grep -q 'free' "$tmp/f.err" && grep -q 'HEAVY_LOCK_MIN_FREE_GB' "$tmp/f.err" || fail "no clear message for a full temp dir: $(cat "$tmp/f.err")"
+[ ! -s "$tmp/f.out" ] || fail "the command ran on a full disk"
+rc=0
+(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/roomy" CI='' "$lock" echo never > "$tmp/g.out" 2> "$tmp/g.err") || rc=$?
+[ "$rc" = 75 ] || fail "a full working dir exited $rc, not 75"
+grep -q "$tmp/full" "$tmp/g.err" || fail "the message does not name the full directory: $(cat "$tmp/g.err")"
+out=$(cd "$tmp/roomy" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/roomy" CI='' "$lock" echo ran) || fail "a disk with room was refused"
+[ "$out" = ran ] || fail "a disk with room printed '$out'"
+out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" HEAVY_LOCK_MIN_FREE_GB=1 CI='' "$lock" echo lowered) || fail "HEAVY_LOCK_MIN_FREE_GB=1 did not lower the threshold"
+[ "$out" = lowered ] || fail "lowered threshold printed '$out'"
+out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" CI=true "$lock" echo ci) || fail "CI=true was refused on a full disk"
+out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" HEAVY_LOCK_HELD=1 CI='' "$lock" echo nested) || fail "a nested run was refused on a full disk"
 
 [ "$fails" = 0 ] || exit 1
 echo "heavy-lock: ok"
