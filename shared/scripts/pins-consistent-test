@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#MISE description="pins-consistent on fixture repositories: two SHAs of cocreiamo/.github, or of actions/checkout, re-actors/alls-green or renovatebot/github-action, in one repository are refused and named; one SHA everywhere (whatever the path of the reusable workflow, whatever the comment) and a local ./ call pass"
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/pins-consistent"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "pins-consistent" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+[ -x "$check" ] || fail "$check is missing or not executable"
+A=1111111111111111111111111111111111111111
+B=2222222222222222222222222222222222222222
+
+# fixture <file> <uses value>...: a repository whose workflow <file> calls each value
+fixture() {
+  local f=$1; shift
+  mkdir -p "$tmp/r/.github/workflows"
+  { printf 'name: x\non: push\njobs:\n'; local i=0 u; for u in "$@"; do i=$((i + 1)); printf '  j%s:\n    uses: %s\n' "$i" "$u"; done; } > "$tmp/r/.github/workflows/$f"
+}
+reset() { rm -rf "$tmp/r"; }
+refused() { # <what> <text in the refusal>
+  if "$check" "$tmp/r" > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted $1"; fi
+  grep -qF "$2" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $1 without saying '$2'"; }
+}
+accepted() { "$check" "$tmp/r" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+reset; fixture a.yml "cocreiamo/.github/.github/workflows/pr-title.yml@$A" "cocreiamo/.github/.github/workflows/shared-rules.yml@$A # v1"
+accepted "two reusable workflows of cocreiamo/.github at one SHA"
+
+reset; fixture a.yml "cocreiamo/.github/.github/workflows/pr-title.yml@$A"; fixture b.yml "cocreiamo/.github/.github/workflows/shared-rules.yml@$B"
+refused "two files that pin cocreiamo/.github at two SHAs" "cocreiamo/.github"
+grep -qF "$A" "$tmp/out" && grep -qF "$B" "$tmp/out" && grep -qF a.yml "$tmp/out" && grep -qF b.yml "$tmp/out" || fail "the refusal must name both SHAs and both files"
+
+reset; fixture a.yml "cocreiamo/.github/.github/workflows/pr-title.yml@$A" "cocreiamo/.github/.github/workflows/shared-rules.yml@$B"
+refused "two jobs of one file that pin cocreiamo/.github at two SHAs" "cocreiamo/.github"
+
+for action in actions/checkout re-actors/alls-green renovatebot/github-action; do
+  reset; fixture a.yml "$action@$A # v1.0.0"; fixture b.yml "$action@$B # v1.0.1"
+  refused "$action at two versions" "$action"
+  reset; fixture a.yml "$action@$A # v1.0.0"; fixture b.yml "$action@$A # v1.0.0"
+  accepted "$action at one version in two files"
+done
+
+reset; fixture a.yml "acme/other@$A"; fixture b.yml "acme/other@$B"
+accepted "an action nobody asked to keep in step"
+
+reset; fixture a.yml "./.github/workflows/x.yml" "cocreiamo/.github/.github/workflows/pr-title.yml@$A"
+accepted "a local call next to one pin"
+
+reset; mkdir -p "$tmp/r/.github/actions/setup"
+printf 'runs:\n  using: composite\n  steps:\n    - uses: actions/checkout@%s\n' "$B" > "$tmp/r/.github/actions/setup/action.yml"
+fixture a.yml "actions/checkout@$A"
+refused "a composite action that pins actions/checkout at another SHA" "actions/checkout"
+
+reset; mkdir -p "$tmp/r"
+accepted "a repository with no workflows"
+echo "pins-consistent ok"
