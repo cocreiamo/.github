@@ -10,7 +10,7 @@ usage: workflow-pins-check.py [repository root]   (default: the repository of th
 Every job of .github/workflows/*.y*ml with `uses: owner/repo/.github/workflows/x.yml@ref` is compared with that file read
 at that ref: a `with:` key that is not under on.workflow_call.inputs, a `secrets:` key that is not under
 on.workflow_call.secrets (unless `secrets: inherit`), a required input or secret the caller omits, and a callee with no
-workflow_call are errors. actionlint checks the local `./` calls; nothing checks the remote ones, which fail only when
+workflow_call are errors, and so is a caller job whose permissions (its own, else its workflow's; none when neither is set) do not cover the permissions of every job of the callee (its own, else the callee's workflow-level ones; write covers read), because the run then fails at startup. actionlint checks the local `./` calls; nothing checks the remote ones, which fail only when
 the run starts (startup_failure on main). Only the pinned ref is read, so a later change of the callee never fails this check.
 
 A file is read once per commit: from $WORKFLOW_PINS_CACHE (default ~/.cache/workflow-pins/<owner>/<repo>/<sha>/<path>)
@@ -83,7 +83,34 @@ def workflow_call(doc):
     return None
 
 
-def check_job(label, job_id, job, errors):
+LEVEL = {"none": 0, "read": 1, "write": 2}
+
+
+def effective(scoped, default):
+    perms = scoped if scoped is not None else default
+    if perms == "read-all":
+        return {"*": 1}
+    if perms == "write-all":
+        return {"*": 2}
+    return {k: LEVEL.get(str(v), 0) for k, v in (perms or {}).items()} if isinstance(perms, dict) or perms is None else {}
+
+
+def granted(perms, scope):
+    return max(perms.get(scope, 0), perms.get("*", 0))
+
+
+def check_permissions(where, job, caller_doc, callee, errors):
+    have = effective(job.get("permissions"), caller_doc.get("permissions"))
+    for callee_id, callee_job in ((callee.get("jobs") or {}).items()):
+        if not isinstance(callee_job, dict):
+            continue
+        need = effective(callee_job.get("permissions"), callee.get("permissions"))
+        for scope, level in sorted(need.items()):
+            if scope != "*" and level > granted(have, scope):
+                errors.append(f"{where}: its job {callee_id} needs `{scope}: {'write' if level == 2 else 'read'}`, which the calling job does not grant (the run fails at startup)")
+
+
+def check_job(label, job_id, job, errors, caller_doc=None):
     m = USES.match(str(job.get("uses", "")))
     if not m:
         return
@@ -101,6 +128,7 @@ def check_job(label, job_id, job, errors):
     if call is None:
         errors.append(f"{where}: the workflow at that ref has no workflow_call trigger")
         return
+    check_permissions(where, job, caller_doc or {}, callee, errors)
     inputs = call.get("inputs") or {}
     secrets = call.get("secrets") or {}
     given = job.get("with") or {}
@@ -133,7 +161,7 @@ def main():
         for job_id, job in (jobs or {}).items():
             if isinstance(job, dict) and USES.match(str(job.get("uses", ""))):
                 calls += 1
-                check_job(str(f.relative_to(root)), job_id, job, errors)
+                check_job(str(f.relative_to(root)), job_id, job, errors, doc)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         print(f"{len(errors)} mismatch(es) between a caller and the reusable workflow at its pin", file=sys.stderr)
