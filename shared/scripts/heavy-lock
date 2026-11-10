@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# heavy-lock <command> [args...]: runs the command holding the workstation-wide lock of heavy jobs, so a second heavy run
+# waits (and says who holds the lock) instead of competing for the CPU. A task takes it with its first line:
+#   [ -n "${HEAVY_LOCK_HELD:-}" ] || exec <path of this script> "$0" "$@"
+# CI=true: no lock (a job has its own machine). HEAVY_LOCK_HELD marks the lock as held, so a locked task that runs a
+# locked task does not wait for itself. HEAVY_LOCK_TIMEOUT (seconds, default 3600) bounds the wait: it ends with 75.
+# The command is exec'd with the lock descriptor open: the lock lives as long as it or anything it started lives, so a
+# job that is still running keeps the workstation reserved. HEAVY_LOCK_FILE overrides the lock path (tests).
+set -euo pipefail
+[ "$#" -gt 0 ] || { echo "usage: heavy-lock <command> [args...]" >&2; exit 2; }
+if [ -n "${HEAVY_LOCK_HELD:-}" ] || [ "${CI:-}" = true ]; then
+  export HEAVY_LOCK_HELD="${HEAVY_LOCK_HELD:-ci}"
+  exec "$@"
+fi
+lock="${HEAVY_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/cocreiamo-heavy.lock}"
+holder="$lock.holder"
+timeout="${HEAVY_LOCK_TIMEOUT:-3600}"
+exec 9>>"$lock"
+who() {
+  local pid cmd
+  IFS=$'\t' read -r pid cmd < "$holder" 2>/dev/null || { echo "an unknown process"; return; }
+  echo "pid ${pid:-?}: ${cmd:-?}"
+}
+if ! flock -n 9; then
+  waited=0
+  echo "heavy-lock: waiting for another heavy job, held by $(who) (gives up after ${timeout}s; this host runs one at a time)" >&2
+  while :; do
+    slice=$((timeout - waited < 60 ? timeout - waited : 60))
+    if [ "$slice" -gt 0 ] && flock -w "$slice" 9; then break; fi
+    waited=$((waited + slice))
+    if [ "$waited" -ge "$timeout" ]; then
+      echo "heavy-lock: gave up after ${timeout}s, still held by $(who)" >&2
+      exit 75
+    fi
+    echo "heavy-lock: still waiting (${waited}s), held by $(who)" >&2
+  done
+fi
+printf '%s\t%s\n' "$$" "$*" > "$holder"
+export HEAVY_LOCK_HELD="$$"
+exec "$@"
