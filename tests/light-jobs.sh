@@ -2,8 +2,8 @@
 # A job asks for the light pool [self-hosted, cocreiamo-ci-light] only when .github/light-jobs lists it with a reason,
 # and a listed job has no secret, no environment, no write permission and a short timeout. Every other job that has a
 # runner stays on [self-hosted, cocreiamo-ci]. A listed job may instead carry the switchable runner
-# ${{ fromJSON(vars.LIGHT_RUNNER || '"ubuntu-latest"') }}: GitHub-hosted while the org's free minutes last, the light pool
-# when the guard in cocreiamo/infrastructure sets the org variable LIGHT_RUNNER to the pool's labels; the same limits apply.
+# ${{ fromJSON(vars.LIGHT_RUNNER || '["self-hosted","cocreiamo-ci-light"]') }}: the light pool while the org variable LIGHT_RUNNER is unset,
+# GitHub-hosted only when the guard in cocreiamo/infrastructure sets it to "ubuntu-latest"; the same limits apply.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 check() {
   local dir=$1 list=$2 f file job runs key t
   declare -A allowed=() seen=()
-  local switchable='"${{ fromJSON(vars.LIGHT_RUNNER || '"'"'\"ubuntu-latest\"'"'"') }}"'
+  local switchable='"${{ fromJSON(vars.LIGHT_RUNNER || '"'"'[\"self-hosted\",\"cocreiamo-ci-light\"]'"'"') }}"'
   while read -r file job reason; do
     case ${file:-} in '' | '#'*) continue ;; esac
     [ -n "${reason:-}" ] || { echo "$list: $file $job has no reason"; continue; }
@@ -68,7 +68,7 @@ refuse environment 'no environment' "$(printf '%s\n    environment: production' 
 refuse write 'read permissions only' "${light/contents: read/contents: write}" 'a.yml j why'
 refuse mixed 'carries exactly' "${light/\[self-hosted, cocreiamo-ci-light\]/[self-hosted, cocreiamo-ci, cocreiamo-ci-light]}" 'a.yml j why'
 refuse slow 'times out' "${light/timeout-minutes: 2/timeout-minutes: 30}" 'a.yml j why'
-expr='${{ fromJSON(vars.LIGHT_RUNNER || '"'"'"ubuntu-latest"'"'"') }}'
+expr='${{ fromJSON(vars.LIGHT_RUNNER || '"'"'["self-hosted","cocreiamo-ci-light"]'"'"') }}'
 refuse switchable-unlisted 'not in' "${light/\[self-hosted, cocreiamo-ci-light\]/$expr}" ''
 refuse switchable-secret 'no secret' "$(printf '%s\n      - run: echo ${{ secrets.X }}' "${light/\[self-hosted, cocreiamo-ci-light\]/$expr}")" 'a.yml j why'
 refuse switchable-slow 'times out' "${light/timeout-minutes: 2/timeout-minutes: 30}" 'a.yml j why'
