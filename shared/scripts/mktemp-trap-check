@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#MISE description="Every shell script that calls mktemp installs an EXIT trap that removes what it made (allowlist: .github/mktemp-trap-allowlist; a path ending in / allowlists a directory)"
 # mktemp-trap-check [repository root]: every shell script (a file whose first line is a bash/sh/env shebang, or *.sh) that calls mktemp (not -u) must
 # install `trap '<something that runs rm>' EXIT`: a test that leaves its tmp.* directory behind is a leak that grows until the disk is full.
 # Allowlist: <root>/.github/mktemp-trap-allowlist, one line per script, or per directory when the path ends in "/": "<path> <reason>" (a line without a reason is refused).
