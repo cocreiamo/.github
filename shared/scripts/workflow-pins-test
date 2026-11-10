@@ -98,6 +98,50 @@ caller gone "4444444444444444444444444444444444444444" "$good_with" "$good_secre
 if run; then fail "accepted a pin whose workflow cannot be read"; fi
 grep -q 'cannot read' "$tmp/out" || { cat "$tmp/out" >&2; fail "an unreadable pin is refused without saying so"; }
 
+perm=4444444444444444444444444444444444444445
+mkdir -p "$tmp/cache/acme/shared/$perm/.github/workflows"
+cat > "$tmp/cache/acme/shared/$perm/.github/workflows/alert.yml" <<'YAML'
+name: alert
+on:
+  workflow_call:
+    inputs:
+      failed:
+        required: true
+        type: string
+permissions: {}
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - run: "true"
+  other:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+YAML
+pcaller() { # pcaller <caller job permissions block, or empty>: a caller of the fixture whose job grants these permissions
+  rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
+  printf 'name: x\non: push\njobs:\n  post:\n%suses: acme/shared/.github/workflows/alert.yml@%s\n    with:\n      failed: build\n' "$1" "$perm" > "$tmp/r/.github/workflows/p.yml"
+}
+pcaller $'    permissions:\n      actions: read\n      issues: write\n    '
+run || { cat "$tmp/out" >&2; fail "refused a caller that grants what the callee jobs ask for"; }
+pcaller $'    permissions:\n      actions: write\n      issues: write\n    '
+run || { cat "$tmp/out" >&2; fail "refused a caller whose write covers the callee read"; }
+pcaller $'    permissions:\n      actions: read\n    '
+if run; then fail "accepted a caller that does not grant issues: write, which makes the run fail at startup on main"; fi
+for word in issues post p.yml; do
+  grep -q "$word" "$tmp/out" || { cat "$tmp/out" >&2; fail "a caller granting too little is refused without naming the file, the job and the permission ($word)"; }
+done
+pcaller $'    permissions:\n      actions: read\n      issues: read\n    '
+if run; then fail "accepted issues: read where the callee asks for write"; fi
+pcaller ''
+if run; then fail "accepted a caller with no permissions at all"; fi
+printf 'permissions:\n  actions: read\n  issues: write\n' | cat - "$tmp/r/.github/workflows/p.yml" > "$tmp/r/p2" && mv "$tmp/r/p2" "$tmp/r/.github/workflows/p.yml"
+run || { cat "$tmp/out" >&2; fail "refused a caller whose workflow-level permissions cover the callee"; }
+
 rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github/workflows"
 cat > "$tmp/r/.github/workflows/local.yml" <<'YAML'
 name: x
