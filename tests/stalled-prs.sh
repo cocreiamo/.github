@@ -16,7 +16,7 @@ yq -e '.on.workflow_call.inputs.cleanup.type == "boolean" and .on.workflow_call.
 yq -e '.on.workflow_call.secrets."app-private-key".required != true' "$wf" >/dev/null || fail "the app key is needed only for the alert: it must be optional"
 yq -N '.jobs.stalled.steps[] | select(.name == "list the stalled pull requests") | .env.SCRIPT' "$wf" > "$tmp/embedded.py"
 [ -s "$tmp/embedded.py" ] && [ "$(cat "$tmp/embedded.py")" != null ] || fail "$wf has no step 'list the stalled pull requests' with env SCRIPT"
-diff -u "$script" "$tmp/embedded.py" >/dev/null || fail "the script embedded in $wf differs from $script: run tools/embed-scripts.sh"
+[ "$(cat "$script")" = "$(cat "$tmp/embedded.py")" ] || fail "the script embedded in $wf differs from $script: run tools/embed-scripts.sh"
 yq -e '(.jobs.stalled.steps[] | select(.name == "empty the workspace") | .if) | test("inputs.cleanup")' "$wf" >/dev/null || fail "the workspace cleanup must run only when cleanup is true"
 yq -e '[.jobs.stalled.steps[] | select(has("uses")) | .uses | test("@[0-9a-f]{40}( |$)")] | all' "$wf" >/dev/null || fail "every action must be pinned by commit"
 yq -e '.jobs.stalled.permissions.issues == "write" and .jobs.stalled.permissions."pull-requests" == "read" and .jobs.stalled.permissions.checks == "read"' "$wf" >/dev/null \
