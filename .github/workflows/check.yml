@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
@@ -29,6 +29,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - run: shared/scripts/workflow-tools-check.py
+      - run: shared/scripts/workflow-hygiene-check.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: hooks/check-conflict-markers
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
@@ -47,6 +50,7 @@ jobs:
       - run: bash tests/claude-pre-bash.sh
       - run: bash tests/workflow-pins.sh
       - run: bash tests/workflow-tools.sh
+      - run: bash tests/workflow-hygiene.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/sync-founder-section.sh
