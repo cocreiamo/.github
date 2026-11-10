@@ -58,4 +58,5 @@ jobs:
       - run: bash tests/workflow-hygiene.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
+      - run: bash tests/renovate-reusable.sh
       - run: bash tests/sync-founder-section.sh
