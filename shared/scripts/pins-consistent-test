@@ -29,7 +29,7 @@ accepted "two reusable workflows of cocreiamo/.github at one SHA"
 
 reset; fixture a.yml "cocreiamo/.github/.github/workflows/pr-title.yml@$A"; fixture b.yml "cocreiamo/.github/.github/workflows/shared-rules.yml@$B"
 refused "two files that pin cocreiamo/.github at two SHAs" "cocreiamo/.github"
-grep -qF "$A" "$tmp/out" && grep -qF "$B" "$tmp/out" && grep -qF a.yml "$tmp/out" && grep -qF b.yml "$tmp/out" || fail "the refusal must name both SHAs and both files"
+for want in "$A" "$B" a.yml b.yml; do grep -qF "$want" "$tmp/out" || fail "the refusal must name both SHAs and both files, not $want"; done
 
 reset; fixture a.yml "cocreiamo/.github/.github/workflows/pr-title.yml@$A" "cocreiamo/.github/.github/workflows/shared-rules.yml@$B"
 refused "two jobs of one file that pin cocreiamo/.github at two SHAs" "cocreiamo/.github"
