@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Test before fix: every fix: commit of the branch (BASE..HEAD, default origin/main) has an earlier test: commit in the same range; with --red-cmd CMD, CMD must also fail on the commit before each fix: (the red proof). Merge commits are ignored"
+#MISE description="Test before fix: every fix: commit of the branch (BASE..HEAD, default origin/main) has an earlier test: commit in the same range; with --red-cmd CMD, CMD must also fail on the commit before each fix: (the red proof). Merge commits, and the commits a merge of main brings in, are ignored"
 set -euo pipefail
 base=origin/main red_cmd=""
 while [[ $# -gt 0 ]]; do
@@ -36,6 +36,8 @@ while read -r sha subject; do
       git worktree remove --force "$work"; rm -rf "$work"; work=""
     fi
   fi
-done < <(git log --no-merges --reverse --format='%H %s' "$base..$head")
+# First parent only: a merge of a newer main into the branch brings main's commits into BASE..HEAD, and they are not
+# the branch's to prove.
+done < <(git log --first-parent --no-merges --reverse --format='%H %s' "$base..$head")
 [ "$status" -eq 0 ] && echo "test-first: ok"
 exit "$status"
