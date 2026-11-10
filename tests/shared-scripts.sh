@@ -2,12 +2,13 @@
 # The shared-rules check carries the canonical scripts of shared/scripts and fails when a repository's vendored copy
 # (declared in its .github/shared-scripts) diverges, loses its executable bit, is missing or is not declared at all.
 set -euo pipefail
+# shellcheck source=../shared/scripts/testlib.sh
+. "$(dirname "$0")/../shared/scripts/testlib.sh"
 cd "$(dirname "$0")/.."
 wf=.github/workflows/shared-rules.yml
 scripts=shared/scripts
-fail() { echo "FAIL: $*" >&2; exit 1; }
 step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tmpdir
 
 bundle=$(step "vendored scripts equal the canonical ones" .env.SCRIPTS_BUNDLE)
 [ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored scripts equal the canonical ones' with SCRIPTS_BUNDLE"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="shared/scripts/testlib.sh: fail exits 1 with FAIL on stderr; tmpdir makes a directory removed at exit; stub_bin puts an executable stub first on PATH; fake_gh answers gh api per canned route and refuses what it does not know"
+# shellcheck disable=SC1090,SC1091,SC2154 # the library is sourced by a computed path; $tmp comes from it
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 lib=$here/testlib.sh

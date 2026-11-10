@@ -3,6 +3,8 @@
 # and a listed job has no secret, no environment, no write permission and a short timeout. Every other job that has a
 # runner stays on [self-hosted, cocreiamo-ci].
 set -euo pipefail
+# shellcheck source=../shared/scripts/testlib.sh
+. "$(dirname "$0")/../shared/scripts/testlib.sh"
 cd "$(dirname "$0")/.."
 
 # check <workflows dir> <allowlist file>: prints one line per violation.
@@ -42,14 +44,14 @@ check() {
 out=$(check .github/workflows .github/light-jobs)
 [ -z "$out" ] || { echo "$out" >&2; exit 1; }
 
-w=$(mktemp -d); trap 'rm -rf "$w"' EXIT
+tmpdir
 refuse() { # name, expected message, workflow body, allowlist body
   local got
-  mkdir -p "$w/$1"
-  printf '%s\n' "$3" > "$w/$1/a.yml"
-  printf '%s\n' "$4" > "$w/$1/list"
-  got=$(check "$w/$1" "$w/$1/list")
-  [[ $got == *"$2"* ]] || { echo "FAIL: case '$1' was not refused ($2)" >&2; exit 1; }
+  mkdir -p "$tmp/$1"
+  printf '%s\n' "$3" > "$tmp/$1/a.yml"
+  printf '%s\n' "$4" > "$tmp/$1/list"
+  got=$(check "$tmp/$1" "$tmp/$1/list")
+  [[ $got == *"$2"* ]] || fail "case '$1' was not refused ($2)"
 }
 light='jobs:
   j:
@@ -68,6 +70,6 @@ refuse slow 'times out' "${light/timeout-minutes: 2/timeout-minutes: 30}" 'a.yml
 refuse noreason 'no reason' "$light" 'a.yml j'
 refuse hosted 'not [self-hosted' "${light/\[self-hosted, cocreiamo-ci-light\]/ubuntu-24.04}" ''
 refuse stale 'not a light job' "${light/-light/}" 'a.yml j why'
-mkdir -p "$w/ok"; printf '%s\n' "$light" > "$w/ok/a.yml"; echo 'a.yml j why' > "$w/ok/list"
-[ -z "$(check "$w/ok" "$w/ok/list")" ] || { echo "FAIL: a listed, clean light job was refused" >&2; exit 1; }
+mkdir -p "$tmp/ok"; printf '%s\n' "$light" > "$tmp/ok/a.yml"; echo 'a.yml j why' > "$tmp/ok/list"
+[ -z "$(check "$tmp/ok" "$tmp/ok/list")" ] || fail "a listed, clean light job was refused"
 echo "light-jobs ok"

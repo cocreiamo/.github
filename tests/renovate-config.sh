@@ -2,29 +2,31 @@
 # The Renovate configs are valid (strict) and the validator refuses a bad one; the shared postUpgradeTask command is
 # one the callers' allowedCommands accepts.
 set -euo pipefail
+# shellcheck source=../shared/scripts/testlib.sh
+. "$(dirname "$0")/../shared/scripts/testlib.sh"
 cd "$(dirname "$0")/.."
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tmpdir
 for f in renovate/default.json renovate.json; do
-  renovate-config-validator --no-global --strict "$f" >"$tmp/out" 2>&1 || { tail -n 15 "$tmp/out" >&2; echo "FAIL: $f is not a valid Renovate config" >&2; exit 1; }
+  renovate-config-validator --no-global --strict "$f" >"$tmp/out" 2>&1 || { tail -n 15 "$tmp/out" >&2; fail "$f is not a valid Renovate config"; }
 done
 echo '{"extends": ["config:recommended"], "notAnOption": true}' > "$tmp/renovate.json"
 if (cd "$tmp" && renovate-config-validator --no-global --strict renovate.json) >/dev/null 2>&1; then
-  echo "FAIL: the validator accepted an invalid config" >&2; exit 1
+  fail "the validator accepted an invalid config"
 fi
 for dep in node helm; do
   jq -e --arg d "$dep" '.packageRules[] | select(.matchDepNames == [$d] and .matchUpdateTypes == ["major"] and .enabled == false)' renovate/default.json >/dev/null \
-    || { echo "FAIL: the $dep major is not held back (the runners lack libatomic for node 26; helm 4 needs kustomize and the charts checked)" >&2; exit 1; }
+    || fail "the $dep major is not held back (the runners lack libatomic for node 26; helm 4 needs kustomize and the charts checked)"
 done
 sha=0123456789abcdef0123456789abcdef01234567
 cmd=$(jq -r '.packageRules[] | select(.postUpgradeTasks) | .postUpgradeTasks.commands[0]' renovate/default.json | sed "s/{{{newDigest}}}/$sha/g")
 allowed=$(cat renovate/allowed-commands.regex)
-grep -Eq "$allowed" <<<"$cmd" || { echo "FAIL: the postUpgradeTasks command does not match renovate/allowed-commands.regex: $cmd" >&2; exit 1; }
-if grep -Eq "$allowed" <<<"${cmd/sync-founder-section/other}"; then echo "FAIL: the allowed-commands regex accepts another script" >&2; exit 1; fi
+grep -Eq "$allowed" <<<"$cmd" || fail "the postUpgradeTasks command does not match renovate/allowed-commands.regex: $cmd"
+if grep -Eq "$allowed" <<<"${cmd/sync-founder-section/other}"; then fail "the allowed-commands regex accepts another script"; fi
 in_workflow=$(yq -N '.jobs.renovate.steps[] | select(.uses == "renovate*") | .env.RENOVATE_ALLOWED_COMMANDS' .github/workflows/renovate.yml | jq -r '.[0]')
-[ "$in_workflow" = "$allowed" ] || { echo "FAIL: renovate.yml allows a command other than renovate/allowed-commands.regex" >&2; exit 1; }
+[ "$in_workflow" = "$allowed" ] || fail "renovate.yml allows a command other than renovate/allowed-commands.regex"
 for perm in statuses checks; do
   [ "$(yq -N ".jobs.renovate.steps[] | select(.uses == \"actions/create-github-app-token*\") | .with.permission-$perm" .github/workflows/renovate.yml)" = read ] \
-    || { echo "FAIL: the token cannot read $perm: Renovate fails with integration-unauthorized when it reads a branch status" >&2; exit 1; }
+    || fail "the token cannot read $perm: Renovate fails with integration-unauthorized when it reads a branch status"
 done
 jq -e '.packageRules[] | select(.matchDepNames == ["cocreiamo/.github"] and (.groupName | type == "string") and .groupName != "")' renovate/default.json >/dev/null \
   || { echo "FAIL: every cocreiamo/.github ref of a repository must move in one PR (a named group on the rule for cocreiamo/.github)" >&2; exit 1; }
