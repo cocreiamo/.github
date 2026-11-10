@@ -9,6 +9,7 @@
   "timezone": "Europe/Rome",
   "dependencyDashboard": true,
   "platformAutomerge": true,
+  "minimumReleaseAge": "3 days",
   "prHourlyLimit": 0,
   "prConcurrentLimit": 10,
   "semanticCommitType": "chore",
