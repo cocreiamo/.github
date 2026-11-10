@@ -39,6 +39,10 @@ on:
         description: judge a commit main has moved past (live verification, where no newer run would blame it)
         type: boolean
         default: false
+      ignore-head-green:
+        description: "dry runs only, for the monthly drill: do not stop at main is green, decide as if the commit were red; it never writes, a real run ignores it"
+        type: boolean
+        default: false
       retry:
         description: the caller repeats the failed jobs once through post-merge-retry.yml; the first attempt then only alerts and the repeat decides
         type: boolean
@@ -78,6 +82,7 @@ jobs:
           MOVED_OK: ${{ inputs.moved-ok }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RETRY: ${{ inputs.retry }}
+          IGNORE_HEAD_GREEN: ${{ inputs.ignore-head-green }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SCRIPT: |
             import json, os, re, sys, urllib.error, urllib.request
@@ -178,12 +183,13 @@ jobs:
                 if merged:
                     p = merged[0]
                     pr = {"number": p["number"], "title": p["title"], "head_ref": p["head"]["ref"], "author": p["user"]["login"], "node_id": p["node_id"]}
+                drill = os.environ.get("IGNORE_HEAD_GREEN") == "true" and os.environ.get("DRY_RUN") == "true"
                 this, runs = push_runs(repo, run_url)
                 first = first_red(repo, sha, commit.get("parents", []), runs)
                 marker = "<!-- post-merge-revert:%s -->" % first["sha"]
                 opened = api("/repos/%s/pulls?state=open&per_page=100" % repo)
                 return {"sha": sha, "head_sha": head, "commit_title": title, "pr": pr, "moved_ok": os.environ.get("MOVED_OK") == "true", "open_revert": any(marker in (p.get("body") or "") for p in opened),
-                        "green_after": green_after(this, runs), "head_green": head_green(runs, head), "first": first}
+                        "green_after": green_after(this, runs) and not drill, "head_green": head_green(runs, head) and not drill, "first": first}
 
             def rerun(repo, run_id):
                 try:
