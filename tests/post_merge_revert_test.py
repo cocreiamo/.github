@@ -9,7 +9,8 @@ PR = {"number": 12, "title": "feat: add x", "head_ref": "add-x", "author": "iamb
 
 
 def facts(**kw):
-    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False, "green_after": False, "head_green": False}
+    f = {"sha": SHA, "head_sha": SHA, "commit_title": "feat: add x (#12)", "pr": dict(PR), "open_revert": False, "moved_ok": False, "green_after": False, "head_green": False,
+         "first": {"sha": SHA, "conclusion": "failure", "known_red": True, "run_id": None, "rerunnable": False}}
     f.update(kw)
     return f
 
@@ -24,8 +25,11 @@ def action(**kw):
 
 
 check("a human PR on the head of main is reverted", action(), "revert")
-check("main moved on: skip", action(head_sha=OTHER), "skip")
-check("main moved on but the caller judges a commit that is no longer the head: revert", action(head_sha=OTHER, moved_ok=True), "revert")
+LATER = {"sha": OTHER, "conclusion": "failure", "known_red": True, "run_id": 3, "rerunnable": False}
+check("main moved on and the commit is the first red of its streak: revert", action(head_sha=OTHER), "revert")
+check("main moved on and the streak began earlier: skip, the run of the newer commit alerts", action(head_sha=OTHER, first=LATER), "skip")
+check("a later red commit of the streak: alert only", action(first=LATER), "alert")
+check("a streak that began at an unverified commit: alert, its run is repeated", prm.decide(facts(first={**LATER, "conclusion": "cancelled", "known_red": False, "rerunnable": True}))["rerun"], 3)
 check("moved_ok never reverts a revert", action(head_sha=OTHER, moved_ok=True, commit_title="revert: feat: add x (#13)"), "alert")
 check("moved_ok still skips a revert already open", action(head_sha=OTHER, moved_ok=True, open_revert=True), "skip")
 check("main is green again after the commit: skip", action(green_after=True), "skip")
@@ -33,7 +37,7 @@ check("green again wins over a revert-worthy PR even when main moved", action(gr
 check("main is green at its head: skip", action(head_green=True), "skip")
 check("green at the head wins over a moved head with moved_ok", action(head_green=True, head_sha=OTHER, moved_ok=True), "skip")
 check("a revert PR already open: skip", action(open_revert=True), "skip")
-check("main moved on wins over everything", action(head_sha=OTHER, pr=None), "skip")
+check("main moved on wins over everything for a later commit of the streak", action(head_sha=OTHER, pr=None, first=LATER), "skip")
 check("never revert a revert (commit title)", action(commit_title="revert: feat: add x (#13)"), "alert")
 check("never revert a revert (branch)", action(pr={**PR, "head_ref": "revert-12-add-x"}), "alert")
 check("never revert a revert (git default title)", action(commit_title='Revert "feat: add x" (#13)'), "alert")
@@ -41,7 +45,7 @@ check("never revert a Renovate PR", action(pr={**PR, "author": "cocreiamo-claude
 check("never revert any bot PR", action(pr={**PR, "author": "cocreiamo-image-updater[bot]"}), "alert")
 check("no PR behind the commit: alert only", action(pr=None), "alert")
 for name in ("skip", "alert", "revert"):
-    assert prm.decide(facts(**({"head_sha": OTHER} if name == "skip" else {})))["reason"]
+    assert prm.decide(facts(**({"head_green": True} if name == "skip" else {"pr": None} if name == "alert" else {})))["reason"]
 
 SC = {}
 LOG = []
@@ -83,6 +87,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             i = SC["shas"].index(sha) if sha in SC["shas"] else -1
             parents = [{"sha": SC["shas"][i + 1]}] if 0 <= i < len(SC["shas"]) - 1 else []
             self.reply(200, {"commit": {"message": ("feat: change %s (#%d)" % (sha[:1], 100 + i) if i >= 0 else "feat: add x (#12)") + "\n\nbody"}, "parents": parents})
+        elif "/issues?labels=main-red" in p:
+            j = SC["judged"]
+            title = "main is red: feat: change %s (#%d)" % (j[:1], 100 + SC["shas"].index(j)) if j in SC["shas"] else "main is red: feat: add x (#12)"
+            self.reply(200, [{"number": 55, "title": title}] if SC["known_issue"] else [])
         elif "/pulls?state=open" in p:
             self.reply(200, [{"number": 99, "body": "<!-- post-merge-revert:" + SC["open_for"] + " -->"}] if SC["open"] else [])
         else:
@@ -110,14 +118,14 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
-def run(dry=False, sha=SHA, attempt="", **kw):
+def run(dry=False, sha=SHA, attempt="", retry="", **kw):
     SC.clear()
     SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": [], "runs_forbidden": False, "ref_fails": False,
-               "chain": [], "shas": [], "open_for": SHA, "rerun_status": 201})
+               "chain": [], "shas": [], "open_for": SHA, "rerun_status": 201, "known_issue": False, "judged": sha})
     SC.update(kw)
     del LOG[:]
     env = {
-        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": sha, "RUN_ATTEMPT": attempt,
+        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": sha, "RUN_ATTEMPT": attempt, "RETRY": retry,
         "FAILED": "fast, slow-lint", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
         "DRY_RUN": "true" if dry else "false",
     }
@@ -147,8 +155,8 @@ if "would revert" not in r.stdout:
     sys.exit("FAIL: a dry run does not say what it would do: " + r.stdout)
 
 r, calls = run(head=OTHER)
-check("main moved on: succeeds", r.returncode, 0)
-check("main moved on: nothing mutated", mutating(calls), [])
+check("main moved on, first red of its streak: succeeds", r.returncode, 0)
+check("main moved on, first red of its streak: reverted", "revertPullRequest" in json.dumps(calls), True)
 
 OLD_OK = {"created_at": "2026-01-01T00:00:00Z", "conclusion": "success", "head_sha": OTHER}
 NEW_OK = {"created_at": "2026-01-03T00:00:00Z", "conclusion": "success", "head_sha": OTHER}
@@ -231,16 +239,27 @@ check("incident: a revert of the first red already open", reverted(calls), [])
 r, calls = run(sha=C, **chain((C, "failure"), (R1, "in_progress"), (G, "success")))
 check("an unfinished parent run counts as unknown", reverted(calls), [])
 
-# the run is repeated once before it is judged
+r, calls = run(sha=R1, **chain((R2, "failure"), (R1, "failure"), (C, "failure"), (G, "success")))
+check("main moved on, a later red of the streak: nothing mutated", mutating(calls), [])
+
+r, calls = run(sha=R2, **chain((R2, "failure"), (R1, "missing"), (G, "success")))
+check("a commit with no run is stepped over, not unknown", reverted(calls), ["PR_4"])
+
+# a transient failure: with retry the first attempt only alerts, the repeat decides
+r, calls = run(sha=R2, attempt="1", retry="true", **chain((R2, "failure"), (R1, "success")))
+check("retry, attempt 1: nothing is reverted", reverted(calls), [])
+check("retry, attempt 1: the alert goes out", "main-red" in json.dumps(calls), True)
+check("retry, attempt 1: succeeds", r.returncode, 0)
+r, calls = run(sha=R2, attempt="2", retry="true", **chain((R2, "failure"), (R1, "success")))
+check("retry, attempt 2: the repeat is red, reverted", reverted(calls), ["PR_4"])
 r, calls = run(sha=R2, attempt="1", **chain((R2, "failure"), (R1, "success")))
-check("attempt 1: the failed jobs are rerun", reruns(calls), ["1"])
-check("attempt 1: nothing is judged while the rerun is pending", [c for c in calls if c[0] == "POST" and "/rerun" not in c[1]], [])
-r, calls = run(sha=R2, attempt="2", **chain((R2, "failure"), (R1, "success")))
-check("attempt 2: judged, not rerun again", (reruns(calls), reverted(calls)), ([], ["PR_4"]))
-r, calls = run(sha=R2, attempt="1", rerun_status=403, **chain((R2, "failure"), (R1, "success")))
-check("attempt 1, rerun refused: judged anyway", reverted(calls), ["PR_4"])
-r, calls = run(sha=R1, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+check("no retry configured, attempt 1: judged at once", reverted(calls), ["PR_4"])
+r, calls = run(sha=R2, attempt="2", retry="true", known_issue=True, **chain((R2, "failure"), (R1, "success")))
+check("an open issue of the same title is reused", [c for c in calls if c[0] == "POST" and c[1].endswith("/issues")], [])
+check("an open issue of the same title gets the comment", any(c[1].endswith("/issues/55/comments") for c in calls), True)
+check("the revert closes the reused issue", "Closes #55" in json.dumps(calls), True)
+r, calls = run(sha=R2, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
 check("an unverified first commit is rerun", reruns(calls), ["12"])
-r, calls = run(dry=True, sha=R1, attempt="1", **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
+r, calls = run(dry=True, sha=R2, **chain((R2, "failure"), (R1, "failure"), (C, "cancelled"), (G, "success")))
 check("a dry run reruns nothing", reruns(calls), [])
 print("python cases ok")
