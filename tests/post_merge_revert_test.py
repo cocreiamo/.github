@@ -118,14 +118,14 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
-def run(dry=False, sha=SHA, attempt="", retry="", **kw):
+def run(dry=False, sha=SHA, attempt="", retry="", ignore="", **kw):
     SC.clear()
     SC.update({"head": SHA, "ref": "add-x", "author": "iambilotta", "pr": True, "open": False, "revert_fails": False, "runs": [], "runs_forbidden": False, "ref_fails": False,
                "chain": [], "shas": [], "open_for": SHA, "rerun_status": 201, "known_issue": False, "judged": sha})
     SC.update(kw)
     del LOG[:]
     env = {
-        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": sha, "RUN_ATTEMPT": attempt, "RETRY": retry,
+        "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "READ_TOKEN": "readtok", "REPO": "cocreiamo/x", "SHA": sha, "RUN_ATTEMPT": attempt, "RETRY": retry, "IGNORE_HEAD_GREEN": ignore,
         "FAILED": "fast, slow-lint", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
         "DRY_RUN": "true" if dry else "false",
     }
@@ -171,6 +171,16 @@ HEAD_OK = {"created_at": "2025-12-31T00:00:00Z", "conclusion": "success", "head_
 r, calls = run(runs=[HEAD_OK])
 check("main is green at its head: succeeds", r.returncode, 0)
 check("main is green at its head: nothing mutated", mutating(calls), [])
+
+r, calls = run(dry=True, ignore="true", runs=[HEAD_OK, NEW_OK])
+check("ignore-head-green: a dry run on a green main still decides", r.returncode, 0)
+if "would revert" not in r.stdout:
+    sys.exit("FAIL: ignore-head-green does not exercise the whole decision: " + r.stdout)
+check("ignore-head-green: a dry run mutates nothing", mutating(calls), [])
+r, calls = run(dry=True, runs=[HEAD_OK, NEW_OK])
+check("without ignore-head-green a green main is skipped", "would revert" in r.stdout, False)
+r, calls = run(ignore="true", runs=[HEAD_OK])
+check("ignore-head-green never reverts for real", mutating(calls), [])
 
 r, calls = run(open=True)
 check("revert already open: nothing mutated", mutating(calls), [])
