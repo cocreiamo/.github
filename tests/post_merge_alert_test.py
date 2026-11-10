@@ -56,7 +56,7 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
-def run(dry=False, failed="publish", prefix="main is red: ", label="main-red", **kw):
+def run(dry=False, failed="publish", prefix="main is red: ", label="main-red", app_failed=False, **kw):
     SC.clear()
     SC.update({"open": False, "logs_fail": False})
     SC.update(kw)
@@ -65,6 +65,7 @@ def run(dry=False, failed="publish", prefix="main is red: ", label="main-red", *
         "PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "app", "READ_TOKEN": "read", "REPO": "cocreiamo/x",
         "SHA": SHA, "FAILED": failed, "RUN_ID": "1", "RUN_URL": "https://github.com/cocreiamo/x/actions/runs/1", "ASSIGNEE": "iambilotta",
         "DRY_RUN": "true" if dry else "false", "TITLE_PREFIX": prefix, "LABEL": label,
+        "APP_TOKEN_FAILED": "true" if app_failed else "false",
     }
     r = subprocess.run([sys.executable, "-I", sys.argv[1]], env=env, capture_output=True, text=True)
     return r, list(LOG)
@@ -73,6 +74,14 @@ def run(dry=False, failed="publish", prefix="main is red: ", label="main-red", *
 def mutating(calls):
     return [c for c in calls if c[0] != "GET"]
 
+
+r, calls = run(app_failed=True)
+check("a dead App token still alerts", r.returncode, 0)
+issue = [c for c in mutating(calls) if c[1].endswith("/issues")]
+check("the issue is opened", len(issue), 1)
+check("the issue says the App token failed", "App token" in issue[0][2]["body"], True)
+r, calls = run()
+check("a healthy token says nothing about it", any("App token" in (c[2] or {}).get("body", "") for c in mutating(calls) if isinstance(c[2], dict)), False)
 
 r, calls = run()
 check("a failed job alerts", r.returncode, 0)

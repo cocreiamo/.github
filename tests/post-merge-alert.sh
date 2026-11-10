@@ -13,7 +13,10 @@ yq -N '.jobs.alert.steps[] | select(.name == "alert") | .env.SCRIPT' "$wf" > "$t
 yq -e '.on.workflow_call.inputs.failed.required and .on.workflow_call.inputs."app-id".required and .on.workflow_call.secrets."app-private-key".required' "$wf" >/dev/null \
   || fail "the workflow must require the inputs failed and app-id and the secret app-private-key"
 yq -e '[.jobs.alert.steps[] | select(has("uses")) | .uses | test("@[0-9a-f]{40}$")] | all' "$wf" >/dev/null || fail "every action must be pinned by commit"
-yq -e '(.jobs.alert.permissions | keys | join(",")) == "actions" and .jobs.alert.permissions.actions == "read"' "$wf" >/dev/null || fail "the job needs exactly actions: read"
+yq -e '(.jobs.alert.permissions | keys | join(",")) == "actions,issues" and .jobs.alert.permissions.actions == "read" and .jobs.alert.permissions.issues == "write"' "$wf" >/dev/null || fail "the job needs exactly actions: read and issues: write (the fallback token)"
+yq -e '(.jobs.alert.steps[] | select(.id == "token") | ."continue-on-error") == true' "$wf" >/dev/null || fail "a dead App key must not stop the alert: the token step is continue-on-error"
+yq -e '(.jobs.alert.steps[] | select(.name == "alert") | .env.GH_TOKEN) | (test("steps.token.outputs.token") and test("github.token"))' "$wf" >/dev/null || fail "the alert falls back to the run own github.token when the App token is missing"
+yq -e '(.jobs.alert.steps[] | select(.name == "alert") | .env.APP_TOKEN_FAILED) | test("steps.token.outcome")' "$wf" >/dev/null || fail "the alert must learn that the App token failed"
 if grep -q 'revertPullRequest' "$wf"; then fail "an alert-only workflow never reverts"; fi
 drill=.github/workflows/alert-drill.yml
 [ -f "$drill" ] || fail "$drill is missing"

@@ -72,6 +72,7 @@ jobs:
     if: ${{ always() && needs.clean-stale.result != 'failure' && (github.event_name == 'schedule' || inputs.expect != 'commented') }}
     permissions:
       actions: read
+      issues: write
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
     with:
       failed: drill-fail
@@ -96,6 +97,7 @@ jobs:
     if: ${{ always() && (github.event_name == 'schedule' || inputs.expect != 'created') && (needs.verify-created.result == 'success' || inputs.expect == 'commented') }}
     permissions:
       actions: read
+      issues: write
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
     with:
       failed: drill-fail
@@ -120,6 +122,7 @@ jobs:
     if: ${{ always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure') }}
     permissions:
       actions: read
+      issues: write
     uses: ./.github/workflows/post-merge-alert.yml # zizmor: ignore[self-repository]  the drill runs the version under test
     with:
       failed: ${{ needs.clean-stale.result == 'failure' && 'clean-stale' || '' }} ${{ needs.alert-created.result == 'failure' && 'alert-created' || '' }} ${{ needs.verify-created.result == 'failure' && 'verify-created' || '' }} ${{ needs.alert-commented.result == 'failure' && 'alert-commented' || '' }} ${{ needs.verify-commented.result == 'failure' && 'verify-commented' || '' }}

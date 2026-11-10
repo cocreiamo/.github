@@ -3,10 +3,11 @@
 #   post-publish:
 #     needs: [publish]
 #     if: ${{ always() && github.event_name == 'push' && needs.publish.result == 'failure' }}
-#     permissions: {actions: read}
+#     permissions: {actions: read, issues: write}
 #     uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@<sha>
 #     with: {failed: "publish", app-id: "${{ vars.CLAUDE_CODE_PR_APP_ID }}"}
 #     secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+# issues: write is the fallback: when the App token cannot be minted, the issue is opened with the run's own token and says so.
 # The issue carries the run link and the failing lines of the job log; the log is read with the run's own token, and an unreadable log
 # never stops the alert. Same transport and label as post-merge-revert.yml; this workflow never writes anything but issues.
 name: post-merge-alert
@@ -44,8 +45,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: read
+      issues: write
     steps:
       - id: token
+        continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ inputs.app-id }}
@@ -54,7 +57,8 @@ jobs:
           permission-issues: write
       - name: alert
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ steps.token.outputs.token || github.token }}
+          APP_TOKEN_FAILED: ${{ steps.token.outcome == 'failure' }}
           READ_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
@@ -120,6 +124,7 @@ jobs:
                         except (RuntimeError, urllib.error.URLError) as e:
                             print("log of %s unreadable: %s" % (name, e), file=sys.stderr)
                     body = "\n".join(["The job %s failed on %s on main: %s" % (name, env["SHA"], env["RUN_URL"]), ""]
+                                     + (["The App token could not be minted (key revoked or expired, or a permission lost): this issue was opened with the run's own token.", ""] if env.get("APP_TOKEN_FAILED") == "true" else [])
                                      + (["Failing lines:", "```"] + [l[:300] for l in lines] + ["```"] if lines else ["The log could not be read: open the run."])
                                      + ["", "No automatic revert: a failed job of this kind is fixed forward.", "", marker])[:60000]
                     existing = [i for i in opened if marker in (i.get("body") or "")]
