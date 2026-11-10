@@ -3,6 +3,6 @@
 # read-only GITHUB_TOKEN, builds nothing, uses no cache and reaches no cluster or host. tests/light-jobs.sh refuses any
 # other job on the label, and any listed job with a secret, an environment, a write permission or a long timeout.
 # The reason: GitHub has no job priority, so a seconds-long required check waited behind 15-minute jobs on the six
-# ordinary slots (19 runs queued on 2026-11-06); GitHub-hosted minutes are not an option (the free quota is used up).
+# ordinary slots (19 runs queued on 2026-11-06); These jobs carry the switchable runner ${{ fromJSON(vars.LIGHT_RUNNER || '"ubuntu-latest"') }}: GitHub-hosted inside the org's free minutes, the pool when the guard (cocreiamo/infrastructure) sets the org variable LIGHT_RUNNER to its labels.
 pr-title.yml check required PR-title check, about 10 seconds, pull-requests read only
 shared-rules.yml check required CLAUDE.md and vendored-scripts check, about 15 seconds, contents read only

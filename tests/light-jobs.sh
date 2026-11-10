@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # A job asks for the light pool [self-hosted, cocreiamo-ci-light] only when .github/light-jobs lists it with a reason,
 # and a listed job has no secret, no environment, no write permission and a short timeout. Every other job that has a
-# runner stays on [self-hosted, cocreiamo-ci].
+# runner stays on [self-hosted, cocreiamo-ci]. A listed job may instead carry the switchable runner
+# ${{ fromJSON(vars.LIGHT_RUNNER || '"ubuntu-latest"') }}: GitHub-hosted while the org's free minutes last, the light pool
+# when the guard in cocreiamo/infrastructure sets the org variable LIGHT_RUNNER to the pool's labels; the same limits apply.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +11,7 @@ cd "$(dirname "$0")/.."
 check() {
   local dir=$1 list=$2 f file job runs key t
   declare -A allowed=() seen=()
+  local switchable='"${{ fromJSON(vars.LIGHT_RUNNER || '"'"'\"ubuntu-latest\"'"'"') }}"'
   while read -r file job reason; do
     case ${file:-} in '' | '#'*) continue ;; esac
     [ -n "${reason:-}" ] || { echo "$list: $file $job has no reason"; continue; }
@@ -20,12 +23,12 @@ check() {
       runs=$(yq -N -o=json -I=0 ".jobs.\"$job\".\"runs-on\"" "$f")
       key="$file:$job"
       case $runs in
-        *cocreiamo-ci-light*) seen[$key]=1 ;;
+        *cocreiamo-ci-light* | "$switchable") seen[$key]=1 ;;
         '["self-hosted","cocreiamo-ci"]') continue ;;
         *) echo "$key: runs on $runs, not [self-hosted, cocreiamo-ci]"; continue ;;
       esac
       [ -n "${allowed[$key]:-}" ] || { echo "$key: asks for the light pool but is not in $list"; continue; }
-      [ "$runs" = '["self-hosted","cocreiamo-ci-light"]' ] || echo "$key: a light job carries exactly [self-hosted, cocreiamo-ci-light], not $runs"
+      [ "$runs" = '["self-hosted","cocreiamo-ci-light"]' ] || [ "$runs" = "$switchable" ] || echo "$key: a light job carries exactly [self-hosted, cocreiamo-ci-light], not $runs"
       [ "$(yq -N ".jobs.\"$job\".environment" "$f")" = null ] || echo "$key: a light job has no environment"
       if yq -N ".jobs.\"$job\"" "$f" | grep -Eq 'secrets\.'; then echo "$key: a light job uses no secret"; fi
       if yq -N ".jobs.\"$job\".permissions // {} | .[]" "$f" | grep -qvx read; then echo "$key: a light job has read permissions only"; fi
