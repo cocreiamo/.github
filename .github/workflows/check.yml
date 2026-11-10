@@ -15,7 +15,7 @@ jobs:
     permissions:
       pull-requests: read
     uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
-  check:
+  lint:
     runs-on: [self-hosted, cocreiamo-ci]
     timeout-minutes: 10
     steps:
@@ -63,7 +63,7 @@ jobs:
       - run: bash tests/renovate-reusable.sh
       - run: bash tests/sync-founder-section.sh
   ci:
-    needs: [title, check]
+    needs: [title, lint]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: [self-hosted, cocreiamo-ci-light]
     timeout-minutes: 5
