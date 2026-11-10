@@ -30,4 +30,11 @@ for perm in statuses checks; do
 done
 jq -e '.packageRules[] | select(.matchDepNames == ["cocreiamo/.github"] and (.groupName | type == "string") and .groupName != "")' renovate/default.json >/dev/null \
   || { echo "FAIL: every cocreiamo/.github ref of a repository must move in one PR (a named group on the rule for cocreiamo/.github)" >&2; exit 1; }
+jq -e '(.minimumReleaseAge // "") | test("^[0-9]+ days?$")' renovate/default.json >/dev/null \
+  || fail "the shared preset sets no minimumReleaseAge: a version published minutes ago would merge by itself"
+jq -e '.platformAutomerge == true and ([.packageRules[] | select(.automerge == true and (.matchUpdateTypes | index("minor")) and (.matchUpdateTypes | index("patch")))] | length) >= 1' renovate/default.json >/dev/null \
+  || fail "the shared preset does not merge minor and patch updates by itself through the platform"
+if jq -e '[.packageRules[] | select(.matchUpdateTypes != null and (.matchUpdateTypes | index("major")) and .automerge == true)] | length == 0 | not' renovate/default.json >/dev/null; then
+  fail "the shared preset merges a major update by itself: majors stay PRs with the changelog"
+fi
 echo "renovate-config ok"
