@@ -24,6 +24,8 @@ expect() { # <pass|fail> <label> <args...>
   [ "$got" = "$want" ] || fail "$label: expected $want, got $got"
 }
 commit "chore: start" 0
+# The fixture has no remote: its main branch stands for origin/main.
+export TEST_FIRST_MAIN=main
 base=$(git rev-parse HEAD)
 
 git checkout -q -b fix-only "$base"; commit "fix: something" 1
@@ -41,4 +43,9 @@ expect pass "a fix: of main merged into the branch is not the branch's" "$base"
 
 git checkout -q -b merged-main-own-fix merged-main; commit "fix: the branch's own fix" 5 feature
 expect fail "the branch's own fix after a merge of main still needs a test" "$base"
+# A fix: brought in by merging another branch (not main) is still a fix of the range and needs its test.
+git checkout -q -b side "$base"; commit "fix: an unproven fix on a side branch" 6 side
+git checkout -q -b merged-side "$base"; commit "feat: the branch's own work" 7 feature
+git merge -q --no-edit side
+expect fail "a fix: reached through the merge of another branch still needs a test" "$base"
 echo "test-first: ok"
