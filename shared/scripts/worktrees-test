@@ -12,6 +12,7 @@ export WT_ROOT="$tmp/wt" FAKE_GH_DIR="$tmp/gh" FAKE_ORIGIN="$tmp/origin.git"
 mkdir -p "$WT_ROOT" "$FAKE_GH_DIR" "$tmp/bin"
 cat > "$tmp/bin/gh" <<'GH'
 #!/usr/bin/env bash
+echo "$*" >> "$FAKE_GH_DIR/gh-calls"
 # gh pr list: the rows "head number STATE oid" of $FAKE_GH_DIR/prs, filtered by --head and --state; --json and --jq are ignored.
 case "$1 ${2:-}" in
   "repo view") echo "example/repo"; exit 0 ;;
@@ -219,6 +220,39 @@ check "wt:gc keeps the output base whose server still runs, saying so" bash -c '
 check "wt:gc keeps the install base, the repository cache and a directory that is not an output base" bash -c '[ -f "$1/install/0123/bin" ] && [ -f "$1/cache/repos/x/blob" ] && [ -d "$1/00000000000000000000000000000000" ]' _ "$bz"
 kill "$srv_running"
 wait "$srv_running" 2>/dev/null || true
+
+wt_new chore/orp-merged
+pr chore/orp-merged MERGED
+bz_orp_wt="$(fake_base "$(realpath "$WT_ROOT/orp-merged")")"
+bz_orp_gone="$(fake_base "$tmp/orphans-workspace-gone")"
+bz_orp_served="$(fake_base "$tmp/orphans-gone-but-served")"
+fake_server "$bz_orp_served" /
+srv_orp=$fake_pid
+sleep 0.5
+: > "$FAKE_GH_DIR/gh-calls"
+"$gc" --orphans --dry-run > "$tmp/orpdry" 2>&1 || true
+check "wt:gc --orphans --dry-run lists the orphan and removes nothing" bash -c 'grep -q "would remove Bazel output base $1 .*orphan" "$3" && [ -d "$1" ] && [ -d "$2" ]' _ "$bz_orp_gone" "$bz_orp_wt" "$tmp/orpdry"
+"$gc" --orphans > "$tmp/orpgc" 2>&1 || true
+check "wt:gc --orphans removes the output base of a workspace that is gone, read-only files included" bash -c '[ ! -e "$1" ] && grep -q "removed Bazel output base $1.*orphan" "$2"' _ "$bz_orp_gone" "$tmp/orpgc"
+check "wt:gc --orphans keeps the base of an existing workspace and the one whose server runs" bash -c '[ -d "$1" ] && [ -d "$2" ] && kill -0 "$3" && grep -q "skip   Bazel output base $2.*server" "$4"' _ "$bz_orp_wt" "$bz_orp_served" "$srv_orp" "$tmp/orpgc"
+check "wt:gc --orphans leaves worktrees and branches alone and never calls gh" bash -c '[ -d "$WT_ROOT/orp-merged" ] && git -C "$1" rev-parse -q --verify chore/orp-merged > /dev/null && [ ! -s "$FAKE_GH_DIR/gh-calls" ]' _ "$tmp/main"
+check "wt:gc --orphans runs outside any repository" bash -c 'cd / && "$0" --orphans' "$gc"
+check "wt:gc refuses an unknown flag" bash -c '! "$0" --nope' "$gc"
+arch="$tmp/arch-retention"
+mkdir -p "$arch/repo/2026-01-01" "$arch/repo/2026-11-09" "$arch/other"
+for f in old.bundle old.uncommitted.patch old.untracked.tgz notes.txt; do echo x > "$arch/repo/2026-01-01/$f"; touch -d '40 days ago' "$arch/repo/2026-01-01/$f"; done
+echo x > "$arch/repo/2026-11-09/young.bundle"
+echo x > "$arch/other/loose.bundle"
+touch -d '40 days ago' "$arch/other/loose.bundle"
+WT_GC_ARCHIVE_DIR="$arch" "$gc" --orphans --dry-run > "$tmp/archdry" 2>&1 || true
+check "wt:gc --orphans --dry-run lists the expired archives and removes none" bash -c 'for f in old.bundle old.uncommitted.patch old.untracked.tgz; do grep -q "would remove archive $1/repo/2026-01-01/$f" "$2" && [ -f "$1/repo/2026-01-01/$f" ] || exit 1; done' _ "$arch" "$tmp/archdry"
+WT_GC_ARCHIVE_DIR="$arch" "$gc" --orphans > "$tmp/archgc" 2>&1 || true
+check "wt:gc --orphans removes archives older than 30 days and the directory it empties" bash -c '[ ! -e "$1/repo/2026-01-01/old.bundle" ] && [ ! -e "$1/repo/2026-01-01/old.untracked.tgz" ] && grep -q "removed archive $1/repo/2026-01-01/old.bundle" "$2"' _ "$arch" "$tmp/archgc"
+check "wt:gc --orphans keeps a young archive, a file that is not an archive, and anything outside <repo>/<date>/" bash -c '[ -f "$1/repo/2026-11-09/young.bundle" ] && [ -f "$1/repo/2026-01-01/notes.txt" ] && [ -f "$1/other/loose.bundle" ]' _ "$arch"
+check "WT_ARCHIVE_DAYS moves the retention" bash -c 'WT_ARCHIVE_DAYS=0 WT_GC_ARCHIVE_DIR="$1" "$0" --orphans > /dev/null && [ ! -e "$1/repo/2026-11-09/young.bundle" ]' "$gc" "$arch"
+check "WT_ARCHIVE_DAYS must be a whole number" bash -c '! WT_ARCHIVE_DAYS=x "$0" --orphans' "$gc"
+kill "$srv_orp"
+wait "$srv_orp" 2>/dev/null || true
 
 [ "$fails" = 0 ] || { echo "$fails failed" >&2; exit 1; }
 echo "wt:gc and wt:list behave"
