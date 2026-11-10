@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#MISE description="shared/scripts/testlib.sh: fail exits 1 with FAIL on stderr; tmpdir makes a directory removed at exit; stub_bin puts an executable stub first on PATH; fake_gh answers gh api per canned route and refuses what it does not know"
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+lib=$here/testlib.sh
+[ -f "$lib" ] || { echo "FAIL: $lib is missing" >&2; exit 1; }
+# shellcheck source=testlib.sh
+. "$lib"
+
+rc=0; out=$( ( . "$lib"; fail "boom here" ) 2>&1 ) || rc=$?
+[ "$rc" = 1 ] || fail "fail must exit 1, got $rc"
+[ "$out" = "FAIL: boom here" ] || fail "fail must print 'FAIL: <message>' on stderr, got '$out'"
+
+dirfile=$(mktemp); trap 'rm -f "$dirfile"' EXIT
+( . "$lib"; tmpdir; echo x > "$tmp/f"; echo "$tmp" > "$dirfile" )
+d=$(cat "$dirfile")
+[ -n "$d" ] || fail "tmpdir did not set \$tmp"
+[ ! -e "$d" ] || fail "tmpdir left $d behind after the shell exited"
+( . "$lib"; tmpdir; echo "$tmp" > "$dirfile"; exit 3 ) || true
+[ ! -e "$(cat "$dirfile")" ] || fail "tmpdir left its directory behind after a failing shell"
+
+tmpdir
+stub_bin hello 'echo "hello $*"'
+[ "$(hello a b)" = "hello a b" ] || fail "the stub is not found on PATH or ignores its arguments"
+[ "$(command -v hello)" = "$tmp/bin/hello" ] || fail "the stub is not under \$tmp/bin"
+stub_bin viastdin <<'STUB'
+echo "stdin $1"
+STUB
+[ "$(viastdin q)" = "stdin q" ] || fail "a stub body read from stdin does not run"
+stub_bin hello 'echo second'
+[ "$(hello)" = second ] || fail "a second stub_bin of the same name does not replace the first"
+[ "$(printf '%s' "$PATH" | tr ':' '\n' | grep -cx "$tmp/bin")" = 1 ] || fail "\$tmp/bin is on PATH more than once"
+
+fake_gh
+fake_gh_route repos/o/r/pulls/7 '{"number":7,"title":"x"}'
+fake_gh_route 'repos/o/r/issues?state=open' '[{"number":1}]'
+[ "$(gh api repos/o/r/pulls/7)" = '{"number":7,"title":"x"}' ] || fail "gh api does not return the canned JSON"
+[ "$(gh api /repos/o/r/pulls/7)" = '{"number":7,"title":"x"}' ] || fail "a leading slash must not matter"
+[ "$(gh api repos/o/r/pulls/7 --jq .number)" = 7 ] || fail "--jq is not applied"
+[ "$(gh api -X GET repos/o/r/pulls/7 -q .title)" = x ] || fail "a method flag and -q are not handled"
+[ "$(gh api 'repos/o/r/issues?state=open')" = '[{"number":1}]' ] || fail "a route with a query string is not matched exactly"
+[ "$(gh api 'repos/o/r/pulls/7?per_page=1')" = '{"number":7,"title":"x"}' ] || fail "a query string with no route of its own must fall back to the path"
+rc=0; gh api repos/o/r/pulls/8 >"$tmp/o" 2>"$tmp/e" || rc=$?
+[ "$rc" != 0 ] || fail "an unknown route must fail"
+grep -q 'Not Found' "$tmp/e" || fail "an unknown route must say Not Found on stderr"
+rc=0; gh pr list >"$tmp/o" 2>"$tmp/e" || rc=$?
+[ "$rc" != 0 ] || fail "a gh command other than api must be refused"
+grep -qF 'repos/o/r/pulls/7' "$FAKE_GH_LOG" || fail "the calls are not logged in \$FAKE_GH_LOG"
+fake_gh_route repos/o/r/pulls/7 '{"number":70}'
+[ "$(gh api repos/o/r/pulls/7 --jq .number)" = 70 ] || fail "registering a route again must replace it"
+echo "testlib ok"
