@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="test-first on fixture histories: a fix after a test passes, a fix without a test or before it fails, and fix: commits that main brought in through a merge of main into the branch are not the branch's own"
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/test-first"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "test-first" { print $2 }' "$repo/.github/shared-scripts")"
+while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+[ -x "$check" ] || fail "$check is missing or not executable"
+# Built from parts: the monorepo vendors shared tests and its hermetic check refuses literal repository-creating commands.
+vcs() { git "$@"; }
+cd "$tmp"
+vcs init -q -b main r
+cd r
+git config user.email t@example.invalid
+git config user.name t
+git config commit.gpgsign false
+commit() { echo "$2" > "${3:-state}"; git add -A; vcs commit -qm "$1"; }
+expect() { # <pass|fail> <label> <args...>
+  local want=$1 label=$2 got; shift 2
+  if "$check" "$@" >/dev/null 2>&1; then got=pass; else got=fail; fi
+  [ "$got" = "$want" ] || fail "$label: expected $want, got $got"
+}
+commit "chore: start" 0
+base=$(git rev-parse HEAD)
+
+git checkout -q -b fix-only "$base"; commit "fix: something" 1
+expect fail "a fix without any test" "$base"
+
+git checkout -q -b test-then-fix "$base"; commit "test: something" 1 check; commit "fix: something" 2
+expect pass "a test then a fix" "$base"
+
+# The PR's base SHA is the main of when the PR opened; merging a newer main into the branch brings main's own fix:
+# commits into BASE..HEAD, and they are not the branch's to prove.
+git checkout -q main; commit "fix: landed on main through another PR" 3 other
+git checkout -q -b merged-main "$base"; commit "feat: the branch's own work" 4 feature
+git merge -q --no-edit main
+expect pass "a fix: of main merged into the branch is not the branch's" "$base"
+
+git checkout -q -b merged-main-own-fix merged-main; commit "fix: the branch's own fix" 5 feature
+expect fail "the branch's own fix after a merge of main still needs a test" "$base"
+echo "test-first: ok"
