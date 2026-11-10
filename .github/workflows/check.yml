@@ -51,6 +51,7 @@ jobs:
       - run: bash tests/pins-consistent.sh
       - run: bash tests/test-first.sh
       - run: bash tests/testlib.sh
+      - run: bash tests/stalled-prs.sh
       - run: bash tests/pr-wait.sh
       - run: bash tests/claude-pre-bash.sh
       - run: bash tests/workflow-pins.sh
@@ -58,4 +59,5 @@ jobs:
       - run: bash tests/workflow-hygiene.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
+      - run: bash tests/renovate-reusable.sh
       - run: bash tests/sync-founder-section.sh
