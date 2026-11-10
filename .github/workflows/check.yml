@@ -36,6 +36,7 @@ jobs:
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
       - run: bash tests/light-jobs.sh
+      - run: bash tests/merge-queue.sh
       - run: bash tests/post-merge-revert.sh
       - run: bash tests/post-merge-retry.sh
       - run: bash tests/post-merge-green.sh
