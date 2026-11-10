@@ -62,3 +62,13 @@ jobs:
       - run: bash tests/renovate-config.sh
       - run: bash tests/renovate-reusable.sh
       - run: bash tests/sync-founder-section.sh
+  ci:
+    needs: [title, check]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: [self-hosted, cocreiamo-ci-light]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
