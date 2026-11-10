@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # heavy-lock: two concurrent runs serialize and the waiter names the holder, a nested run does not deadlock, CI=true bypasses the lock, a wait that outlasts its budget exits 75 with a message, the exit code of the command is kept.
+# shellcheck disable=SC2016 # the bash -c bodies are single-quoted on purpose: they expand in the child
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 lock="$repo/shared/scripts/heavy-lock"
