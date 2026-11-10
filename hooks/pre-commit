@@ -1,2 +1,8 @@
 #!/usr/bin/env bash
-exec "$(git rev-parse --show-toplevel)/hooks/check-conflict-markers"
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+"$root/hooks/check-conflict-markers"
+if git diff --cached --name-only -z | tr '\0' '\n' | grep -q '^shared/scripts/'; then
+  "$root/tools/embed-scripts.sh"
+  git add .github/workflows/shared-rules.yml .github/workflows/stalled-prs.yml
+fi

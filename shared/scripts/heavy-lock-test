@@ -78,5 +78,30 @@ out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/f
 out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" CI=true "$lock" echo ci) || fail "CI=true was refused on a full disk"
 out=$(cd "$tmp/full" && PATH="$tmp/bin:$PATH" DF_FULL="$tmp/full" TMPDIR="$tmp/full" HEAVY_LOCK_HELD=1 CI='' "$lock" echo nested) || fail "a nested run was refused on a full disk"
 
+# a daemon the command leaves behind (a Bazel server) does not keep the lock once the command has ended.
+CI='' "$lock" bash -c 'setsid sleep 60 < /dev/null > /dev/null 2>&1 & echo "$!" > "$0"' "$tmp/daemon.pid"
+rc=0
+CI='' HEAVY_LOCK_TIMEOUT=3 "$lock" true 2> "$tmp/d.err" || rc=$?
+[ "$rc" = 0 ] || fail "a daemon left by the previous command still holds the lock: $(cat "$tmp/d.err")"
+kill "$(cat "$tmp/daemon.pid")" 2> /dev/null || true
+
+# SIGTERM to the lock holder stops its command, and the lock is free afterwards.
+CI='' "$lock" bash -c 'echo "$$" > "$0"; exec sleep 60' "$tmp/cmd.pid" &
+h=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$tmp/cmd.pid" ] && break; sleep 0.2; done
+kill -TERM "$h"
+wait "$h" 2> /dev/null || true
+sleep 0.5
+if kill -0 "$(cat "$tmp/cmd.pid")" 2> /dev/null; then
+  fail "SIGTERM to the holder left its command running"
+  kill "$(cat "$tmp/cmd.pid")" 2> /dev/null || true
+fi
+rc=0
+CI='' HEAVY_LOCK_TIMEOUT=3 "$lock" true || rc=$?
+[ "$rc" = 0 ] || fail "the lock was not free after SIGTERM to its holder"
+
+# stdin reaches the command.
+[ "$(echo piped | CI='' "$lock" cat)" = piped ] || fail "stdin did not reach the command"
+
 [ "$fails" = 0 ] || exit 1
 echo "heavy-lock: ok"
