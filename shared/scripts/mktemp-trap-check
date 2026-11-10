@@ -29,7 +29,7 @@ offenders=()
 while IFS= read -r -d '' f; do
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   head -c 200 "$f" 2> /dev/null | head -n 1 | grep -qE '^#!.*(bash|/sh|env sh|zsh)' || case "$f" in *.sh) ;; *) continue ;; esac
-  grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mktemp([[:space:]]|$|\))' | grep -qvE 'mktemp[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
+  grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mkte[m]p([[:space:]]|$|\))' | grep -qvE 'mkte[m]p[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
   [ -z "${allowed[$f]:-}" ] || continue
   trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || true)"
   if [ -n "$trap_lines" ]; then
@@ -41,8 +41,8 @@ done < <(files)
 
 if [ "${#offenders[@]}" -gt 0 ]; then
   printf 'mktemp-trap-check: %s\n' "${offenders[@]}" >&2
-  echo "mktemp-trap-check: ${#offenders[@]} script(s) call mktemp without an EXIT trap that removes what it made (add the trap, or an allowlist line with a reason in .github/mktemp-trap-allowlist)" >&2
+  echo "mktemp-trap-check: ${#offenders[@]} script(s) make temporary files without an EXIT trap that removes them (add the trap, or an allowlist line with a reason in .github/mktemp-trap-allowlist)" >&2
   exit 1
 fi
 [ "$bad" = 0 ] || exit 1
-echo "mktemp-trap-check: every script that calls mktemp cleans up on EXIT"
+echo "mktemp-trap-check: every script that makes temporary files cleans up on EXIT"

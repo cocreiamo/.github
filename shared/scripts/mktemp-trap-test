@@ -50,4 +50,8 @@ refused "an allowlist line with no reason" "reason"
 printf 'tools/leaky the caller removes the directory it passes in\n' > "$tmp/r/.github/mktemp-trap-allowlist"
 accepted "an allowlisted script"
 
+fixture
+cp "$check" "$tmp/r/tools/mktemp-trap-check"
+accepted "the check itself (its own messages name the command)"
+
 echo "mktemp-trap-check: ok"

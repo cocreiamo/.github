@@ -1,0 +1,7 @@
+id: dotgithub/test/heavy-lock.sh
+repo: dotgithub
+invariant: 'shared/scripts/heavy-lock serializes heavy runs on one host through one flock file under XDG_RUNTIME_DIR, and refuses to start when the free space is below the threshold.'
+runs:
+- pr-ci
+command: bash tests/heavy-lock.sh
+file: tests/heavy-lock.sh
