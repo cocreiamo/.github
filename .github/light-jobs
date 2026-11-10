@@ -6,3 +6,4 @@
 # ordinary slots (19 runs queued on 2026-11-06); GitHub-hosted minutes are not an option (the free quota is used up).
 pr-title.yml check required PR-title check, about 10 seconds, pull-requests read only
 shared-rules.yml check required CLAUDE.md and vendored-scripts check, about 15 seconds, contents read only
+check.yml ci required aggregator, about 5 seconds, no permissions
