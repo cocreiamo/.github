@@ -1,0 +1,7 @@
+id: dotgithub/test/shared-configs.sh
+repo: dotgithub
+invariant: The shared-rules check carries the canonical configs of shared/config and fails when a repository's copy diverges, is missing, is a link or is undeclared; the sync rewrites the declared copies.
+runs:
+- pr-ci
+command: bash tests/shared-configs.sh
+file: tests/shared-configs.sh
