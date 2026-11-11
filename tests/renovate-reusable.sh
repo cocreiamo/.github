@@ -50,7 +50,7 @@ run '{"RENOVATE_ALLOWED_UNSAFE_EXECUTIONS":"[\"bazelModDeps\"]"}' '{"RENOVATE_HO
 [ "$rc" = 0 ] || { cat "$tmp/out" >&2; fail "a valid extra environment was refused"; }
 { grep -q '^RENOVATE_ALLOWED_UNSAFE_EXECUTIONS<<' "$tmp/github-env" && grep -qF '["bazelModDeps"]' "$tmp/github-env"; } || fail "extra-env is not written to GITHUB_ENV"
 { grep -q '^RENOVATE_HOST_RULES<<' "$tmp/github-env" && grep -qF 'line two' "$tmp/github-env"; } || fail "extra-env-secret is not written to GITHUB_ENV (multi-line values included)"
-for bad in '{"PATH":"x"}' '{"renovate_x":"x"}' '{"RENOVATE_TOKEN":"x"}' '{"RENOVATE_ALLOWED_COMMANDS":"[]"}' '{"RENOVATE_REPOSITORIES":"o/r"}' '[1]' 'not json' '{"RENOVATE_X":1}'; do
+for bad in '{"PATH":"x"}' '{"renovate_x":"x"}' '{"RENOVATE_TOKEN":"x"}' '{"RENOVATE_ALLOWED_COMMANDS":"[]"}' '{"RENOVATE_LOG_FILE":"/x"}' '{"RENOVATE_REPOSITORIES":"o/r"}' '[1]' 'not json' '{"RENOVATE_X":1}'; do
   run "$bad" ''
   [ "$rc" != 0 ] || fail "extra-env $bad was accepted"
   run '' "$bad"
@@ -85,7 +85,7 @@ classify() { # <log...>: the status the classify step writes
   sed -n 's/^status=//p' "$tmp/out-status"
 }
 final() { rc=0; RENOVATE_LOGS="$*" python3 -I "$tmp/result.py" > "$tmp/out" 2>&1 || rc=$?; }
-log "$tmp/ok.log" done 0
+log "$tmp/ok.log" "done" 0
 log "$tmp/changed.log" repository-changed 6
 log "$tmp/bad.log" external-host-error 1
 printf '%s\n' '{"level":30,"msg":"Renovate started"}' > "$tmp/crash.log"
