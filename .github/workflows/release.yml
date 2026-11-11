@@ -1,0 +1,48 @@
+# The commons release: shared/scripts, shared/config and the founder section as one archive with a checksum, versioned by the
+# commit title (tools/next-version.sh), attested with build provenance. Installed by mise in every repository:
+#   [tools."github:cocreiamo/.github"]  version = "<x.y.z>"  asset_pattern = "commons-*.tar.gz"  bin_path = "scripts"
+# Attestations need a public repository, so a private one releases nothing.
+name: release
+on:
+  push:
+    branches: [main]
+    paths: [shared/**, tools/build-release.sh]
+  workflow_dispatch:
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  release:
+    if: github.repository_visibility == 'public'
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          cache: false
+      - id: version
+        run: echo "version=$(tools/next-version.sh "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+      - if: steps.version.outputs.version != ''
+        run: tools/build-release.sh "${{ steps.version.outputs.version }}" dist
+      - if: steps.version.outputs.version != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/commons-*.tar.gz
+      - if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" dist/commons-*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes "Commons release $VERSION: scripts/, config/, founder-section.md. Install with mise (see README, «Commons release»)."
