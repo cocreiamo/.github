@@ -76,6 +76,7 @@ jobs:
       - run: bash tests/renovate-config.sh
       - run: bash tests/renovate-reusable.sh
       - run: bash tests/post-merge-selftest.sh
+      - run: bash tests/maintenance-reusables.sh
       - run: bash tests/sync-founder-section.sh
   ci:
     needs: [title, lint]

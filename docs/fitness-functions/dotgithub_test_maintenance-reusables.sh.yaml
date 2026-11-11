@@ -1,0 +1,7 @@
+id: dotgithub/test/maintenance-reusables.sh
+repo: dotgithub
+invariant: The conflict labelling of open pull requests, the re-arming of auto-merge and the nightly end-of-life issue are reusable workflows every repository calls; each has a concurrency group, timeouts, pinned actions and the least permissions, and its behaviour is proven on a stub API.
+runs:
+- pr-ci
+command: bash tests/maintenance-reusables.sh
+file: tests/maintenance-reusables.sh
