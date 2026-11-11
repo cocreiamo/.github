@@ -9,8 +9,8 @@ actionlint = "1.7.12"
 zizmor = "1.32.0"
 node = "24.22.2"
 "npm:renovate" = { version = "44.222.5", trust_policy_excludes = ["@yarnpkg/libzip@3.2.2"] }
+gh = "2.102.1"
 jq = "1.8.2"
-gh = "2.100.0"
 uv = "0.13.7"
 
 [hooks]

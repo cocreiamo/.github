@@ -33,7 +33,7 @@ on:
 permissions: {}
 jobs:
   queue:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 5
     permissions: {}
     steps:

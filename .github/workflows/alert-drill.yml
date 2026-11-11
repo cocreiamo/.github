@@ -19,7 +19,7 @@ on:
 permissions: {}
 jobs:
   drill-fail:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 5
     continue-on-error: true
     permissions: {}
@@ -29,7 +29,7 @@ jobs:
           exit 1
   clean-stale:
     if: ${{ github.event_name == 'schedule' || inputs.expect != 'commented' }}
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 5
     permissions: {}
     steps:

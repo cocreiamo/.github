@@ -26,6 +26,30 @@ Callers pin a commit SHA; Renovate proposes the bumps (see «Renovate»). `hooks
 
 `.github/PULL_REQUEST_TEMPLATE.md` is the organization's default pull request template (a repository without its own gets it): what, why, the test proven red, how the class is closed; `bash tests/pr-template.sh` keeps the four sections.
 
+## Commons release
+
+This repository is public. `shared/scripts`, `shared/config` and the founder section are published as one versioned release (`release.yml`): the archive `commons-<version>.tar.gz` (`scripts/` without the tests of the scripts, `config/`, `founder-section.md`, `VERSION`), `SHA256SUMS`, and a build provenance attestation (`actions/attest-build-provenance`; attestations need a public repository, so a private one releases nothing). On every push to main that changes `shared/` or `tools/build-release.sh`, `tools/next-version.sh` picks the version from the Conventional Commit title of the squash commit (`feat` minor, `type!:` or a `BREAKING CHANGE` footer major, anything else patch; first release 1.0.0) and publishes it; `gh workflow run release.yml` releases the current main when nothing was published yet.
+
+A consumer installs it with mise, one line pinned by version (Renovate bumps it; the `github:` backend verifies the attestation, and a `mise.lock` records the checksum):
+
+```toml
+[tools."github:cocreiamo/.github"]
+version = "1.0.0"
+asset_pattern = "commons-*.tar.gz"
+bin_path = "scripts"
+```
+
+`bin_path` puts every script of `scripts/` on `PATH` (`wt-gc`, `pr-wait.sh`, `lint-baseline`, `workflow-pins-check.py`, ...), so a mise task is `run = "wt-gc"` and a workflow step after the mise setup calls them by name. The files stay in the mise install directory (`mise where github:cocreiamo/.github`, read-only cache, never committed). What a repository must hold at its own root (the `.gitignore`, the linter configs, the community files) is declared in `.github/shared-configs` (`<name in config/> <path here>`, `#` comments) and materialised by `commons-sync`: `mise run commons:sync` rewrites the copies and the `## Working with the founder` section of `CLAUDE.md`, `commons-sync --check` (the CI step) writes nothing and fails with the diff on any drift: content, a link in place of a copy, the executable bit, the section. Its tasks:
+
+```toml
+[tasks."commons:sync"]
+run = "commons-sync"
+[tasks."commons:check"]
+run = "commons-sync --check"
+```
+
+`bash tests/commons-release.sh` proves it on a throwaway consumer: a reproducible archive without tests, the version rules, an install at the pinned checksum (a wrong one refused), the scripts on `PATH`, and `commons-sync` with each drift refused.
+
 ## Shared rules
 
 `shared/working-with-the-founder.md` is the one canonical copy of the section `## Working with the founder`, present in the `CLAUDE.md` of infrastructure, deploy and cocreiamo. A caller's token cannot read this private repository's files, so `shared-rules.yml` embeds the text and `tests/shared-rules.sh` keeps the embedded copy equal to the file. To change the rule: edit both here (the test fails otherwise), merge, then in each repository bump the pin of `shared-rules.yml` and carry the new text into its `CLAUDE.md`: until it does, its `rules / check` is red and the merge is blocked. Every caller must grant its job the permission the workflow needs (`pr-title.yml`: `pull-requests: read`; `shared-rules.yml`: `contents: read`), or the run is a `startup_failure`; each repository's checks require it.
