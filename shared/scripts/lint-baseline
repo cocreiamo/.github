@@ -61,7 +61,7 @@ lint_secrets() {
   local tree f
   tree=$(mktemp -d)
   # shellcheck disable=SC2064 # the path is fixed now, on purpose
-  trap "rm -rf '$tree'" RETURN
+  trap "rm -rf '$tree'" EXIT
   while IFS= read -r -d '' f; do
     { [ -f "$f" ] || [ -L "$f" ]; } && printf '%s\0' "$f"
   done < <(git ls-files -z) | tar --null -T - -cf - | tar -xf - -C "$tree"
