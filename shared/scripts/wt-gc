@@ -150,7 +150,7 @@ archive() {
   if [ -n "$path" ]; then
     git -C "$path" diff HEAD --binary > "$base.uncommitted.patch" || return 1
     if [ -s "$base.uncommitted.patch" ]; then made+=("$base.uncommitted.patch"); else rm -f "$base.uncommitted.patch"; fi
-    if [ -n "$(git -C "$path" ls-files -o --exclude-standard)" ]; then
+    if [ -n "$(git -C "$path" -c core.quotePath=false ls-files -o --exclude-standard)" ]; then
       git -C "$path" ls-files -o --exclude-standard -z | tar -C "$path" --null -T - -czf "$base.untracked.tgz" || return 1
       tar -tzf "$base.untracked.tgz" > /dev/null || return 1
       made+=("$base.untracked.tgz")
@@ -275,7 +275,7 @@ handle() {
     return
   fi
   if [ -n "$path" ]; then
-    if [ -n "$(git -C "$path" status --porcelain)" ]; then
+    if [ -n "$(git -C "$path" -c core.quotePath=false status --porcelain)" ]; then
       echo "skip   $branch: uncommitted changes in $path"
       return
     fi
