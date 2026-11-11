@@ -1,0 +1,73 @@
+# Reusable: a pinned version that is end of life, or reaches it within 60 days, opens (or updates) one issue labelled eol in the calling
+# repository; the issue closes itself when none is left. The check is the caller's mise task (default check:eol, which runs
+# shared/scripts/eol_check.py: the FAIL lines on stderr are the findings; any other failure fails the run). cleanup: true first empties
+# the runner workspace (files a root container left behind need root to go: falls back to Docker). A caller adds:
+#   on: {schedule: [{cron: "37 2 * * *"}], workflow_dispatch: {}}
+#   permissions: {}
+#   jobs:
+#     eol:
+#       permissions: {contents: read, issues: write}
+#       uses: cocreiamo/.github/.github/workflows/eol.yml@<sha>
+#       with: {task: "check:eol", cleanup: false}
+# The workflow keeps its own concurrency group, so the caller sets none. It calls gh after ci-mise-setup: the caller's mise.toml pins gh.
+name: eol
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: the mise task that prints the findings (lines starting FAIL) on stderr
+        type: string
+        default: check:eol
+      cleanup:
+        description: empty the runner workspace before the run
+        type: boolean
+        default: false
+concurrency:
+  group: eol-${{ github.repository }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  eol:
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: empty the workspace
+        if: ${{ inputs.cleanup }}
+        run: |
+          find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null ||
+            docker run --rm -v "$GITHUB_WORKSPACE:/w" registry.cocreiamo.com/dockerhub/library/busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec find /w -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ci-mise-setup
+      - name: pinned versions that are end of life or reach it within 60 days
+        id: eol
+        env:
+          EOL_TASK: ${{ inputs.task }}
+        run: |
+          set +e
+          mise run "$EOL_TASK" > eol.txt 2> eol.err
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: open, update or close the end-of-life issue
+        run: |
+          number=$(gh issue list --label eol --state open --json number --jq '.[0].number // empty')
+          if grep -q '^FAIL' eol.err; then
+            { echo "Pinned versions at or near end of life (checked $(date -u +%F), source endoflife.date):"; echo; echo '```'; grep '^FAIL' eol.err; echo '```'; } > body.md
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --body-file body.md
+            else
+              gh label create eol --description "A pinned version is at or near end of life" --color D93F0B 2>/dev/null || true
+              gh issue create --title "Pinned versions near end of life" --label eol --body-file body.md
+            fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "No pinned version is within 60 days of its end of life."
+          fi
+      - name: a failed check that is not a finding fails the run
+        if: steps.eol.outputs.status != '0'
+        run: grep -q '^FAIL' eol.err || { cat eol.err; exit 1; }

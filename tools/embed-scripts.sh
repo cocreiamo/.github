@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Writes shared/scripts and shared/config into .github/workflows/shared-rules.yml as the base64 of a gzipped tar (a caller's token cannot
 # read this private repository's files, so the workflow carries the scripts it compares against), and
-# shared/scripts/stalled_prs.py into .github/workflows/stalled-prs.yml (the reusable workflow runs it from there).
-# tests/shared-scripts.sh, tests/shared-configs.sh and tests/stalled-prs.sh fail until this has been run after a change to shared/scripts or shared/config.
+# shared/scripts/stalled_prs.py into .github/workflows/stalled-prs.yml and shared/scripts/mark_conflicts.py into .github/workflows/dirty-prs.yml
+# (the reusable workflows run them from there).
+# tests/shared-scripts.sh, tests/shared-configs.sh and tests/stalled-prs.sh and tests/maintenance-reusables.sh fail until this has been run after a change to shared/scripts or shared/config.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
@@ -28,3 +29,4 @@ embed .github/workflows/shared-rules.yml '^ +SCRIPTS_BUNDLE: \\|-$' "$bundle"
 config_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/config . | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CONFIGS_BUNDLE: \\|-$' "$config_bundle"
 embed .github/workflows/stalled-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/stalled_prs.py)"
+embed .github/workflows/dirty-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/mark_conflicts.py)"

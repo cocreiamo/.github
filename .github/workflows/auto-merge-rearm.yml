@@ -1,0 +1,51 @@
+# Reusable: closing and reopening a PR silently drops its auto-merge. It is armed again (squash) with the App token, because a merge done
+# with GITHUB_TOKEN starts no workflow on main. No code of the PR is checked out: this workflow runs with secrets, on pull_request_target,
+# and only for PRs of the repository itself (never a fork, never a draft). The App is cocreiamo-claude-code-pr (variable
+# CLAUDE_CODE_PR_APP_ID of the caller). The workflow keeps its own concurrency group per PR, so the caller sets none. A caller adds:
+#   on: {pull_request_target: {types: [opened, reopened, ready_for_review]}}
+#   permissions: {}
+#   jobs:
+#     arm:
+#       permissions: {}
+#       uses: cocreiamo/.github/.github/workflows/auto-merge-rearm.yml@<sha>
+#       secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+name: auto-merge-rearm
+on:
+  workflow_call:
+    secrets:
+      app-private-key:
+        required: true
+concurrency:
+  group: auto-merge-rearm-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  arm:
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, cocreiamo-ci]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+          private-key: ${{ secrets.app-private-key }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: arm auto-merge
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+          GRAPHQL_URL: https://api.github.com/graphql
+          SCRIPT: |
+            import json, os, sys, urllib.request
+            query = "mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){clientMutationId}}"
+            payload = json.dumps({"query": query, "variables": {"id": os.environ["PR_NODE_ID"]}}).encode()
+            headers = {"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Content-Type": "application/json"}
+            req = urllib.request.Request(os.environ["GRAPHQL_URL"], data=payload, headers=headers)
+            out = json.load(urllib.request.urlopen(req, timeout=30))
+            if out.get("errors"):
+                sys.exit("auto-merge: " + json.dumps(out["errors"])[:300])
+        run: python3 -I -c "$SCRIPT"
