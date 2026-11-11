@@ -98,5 +98,21 @@ if sync_in "$tmp/repo"; then fail "the sync accepted a non-canonical name"; fi
 printf 'ruff.toml ../escape\n' > "$tmp/repo/.github/shared-configs"
 if sync_in "$tmp/repo"; then fail "the sync wrote outside the repository"; fi
 
+# the org community files are vendorable under .github/ (this repository stays private, so GitHub's organization defaults do not apply)
+community="SECURITY.md PULL_REQUEST_TEMPLATE.md ISSUE_TEMPLATE/bug.yml ISSUE_TEMPLATE/task.yml ISSUE_TEMPLATE/config.yml"
+rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github/ISSUE_TEMPLATE"; : > "$tmp/repo/.github/shared-configs"
+for f in $community; do
+  [ -s "$configs/$f" ] || fail "$configs/$f is missing or empty"
+  cp "$configs/$f" "$tmp/repo/.github/$f"
+  echo "$f .github/$f" >> "$tmp/repo/.github/shared-configs"
+  cmp -s ".github/$f" "$configs/$f" || fail "this repository's .github/$f is not the canonical community file"
+done
+run "$tmp/repo" || { cat "$tmp/out" >&2; fail "refused community files that are the canonical ones under .github/"; }
+echo "Contact someone else" >> "$tmp/repo/.github/SECURITY.md"
+if run "$tmp/repo"; then fail "accepted a diverged SECURITY.md"; fi
+printf '# Repo\n\n## Working with the founder\n\nold\n' > "$tmp/repo/CLAUDE.md"
+sync_in "$tmp/repo" || { cat "$tmp/out" >&2; fail "the sync failed on the community files"; }
+run "$tmp/repo" || { cat "$tmp/out" >&2; fail "the community files are not canonical after the sync"; }
+
 cmp -s .gitignore "$configs/gitignore" || fail "this repository's own .gitignore is not the canonical one"
 echo "shared-configs ok"
