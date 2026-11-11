@@ -51,6 +51,18 @@ To change a script: edit `shared/scripts/<name>`, run `tools/embed-scripts.sh` (
 
 ## Community health files
 
+Because this repository is private, a repository gets these files by vendoring them: `shared/config` holds the canonical copies (`SECURITY.md`, `PULL_REQUEST_TEMPLATE.md`, `ISSUE_TEMPLATE/bug.yml`, `ISSUE_TEMPLATE/task.yml`, `ISSUE_TEMPLATE/config.yml`) and a consumer lists them in `.github/shared-configs` with its own `.github/` paths:
+
+```
+SECURITY.md .github/SECURITY.md
+PULL_REQUEST_TEMPLATE.md .github/PULL_REQUEST_TEMPLATE.md
+ISSUE_TEMPLATE/bug.yml .github/ISSUE_TEMPLATE/bug.yml
+ISSUE_TEMPLATE/task.yml .github/ISSUE_TEMPLATE/task.yml
+ISSUE_TEMPLATE/config.yml .github/ISSUE_TEMPLATE/config.yml
+```
+
+The check and the Renovate sync then keep them equal. The copies in this repository's `.github/` must equal the canonical ones (`bash tests/shared-configs.sh`); edit both. `lint-baseline` skips templates (`*.j2`, `*.jinja`, `*.jinja2`, `*.tmpl`, `*.tpl`, `*.erb`, `*.mustache`) even with a shebang.
+
 `.github/SECURITY.md` and `.github/ISSUE_TEMPLATE/` (forms `bug.yml` and `task.yml`, `config.yml`) join the pull request template as the organization defaults: GitHub reads them from the `.github/` folder of this repository for every repository that has none of its own. GitHub requires the `.github` repository to be public for defaults to apply; this one is private, so they take effect only once it is made public. `bash tests/community-files.sh` keeps the files valid and the founder's address the only contact.
 
 ## Renovate
