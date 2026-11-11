@@ -45,6 +45,7 @@ jobs:
       - run: bash tests/commons-release.sh
       - run: bash tests/ci-aggregator.sh
       - run: bash tests/merge-queue.sh
+      - run: bash tests/unattributed-commits.sh
       - run: bash tests/post-merge-revert.sh
       - run: bash tests/post-merge-retry.sh
       - run: bash tests/post-merge-green.sh

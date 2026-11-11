@@ -1,6 +1,8 @@
 # Reusable: the serial merge queue of a repository whose main ruleset requires up-to-date branches. GitHub merges a PR only when its
 # branch contains main, so after each merge every other PR is behind; this workflow brings exactly one of them up to date, the oldest that has
 # auto-merge on and green required checks, and waits for it to merge before it touches the next (a PR already up to date and not red is in flight).
+# A PR that is blocked with every required check green for more than two minutes (typically commits GitHub cannot attribute) never holds the queue: it gets the label
+# queue-blocked and one comment with the reason, and the queue moves on to the next one.
 # The required checks are read from the ruleset of main, so the names live in one place (tofu/github of cocreiamo/infrastructure).
 # The update is made as the App, because a push made with the workflow token starts no workflow. A caller runs it when main moves, when auto-merge is
 # switched on and when a workflow that reports a required check completes:
@@ -54,10 +56,12 @@ jobs:
           REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry-run }}
           SCRIPT: |
-            import json, os, sys, urllib.error, urllib.request
+            import datetime, json, os, sys, urllib.error, urllib.request
 
             API = os.environ.get("API_URL", "https://api.github.com")
             OK = ("success", "skipped", "neutral")
+            LABEL = "queue-blocked"
+            GRACE = 120
 
             def call(method, path, body=None):
                 req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={
@@ -71,16 +75,49 @@ jobs:
 
             def verdict(repo, sha, contexts):
                 if not contexts:
-                    return "pending"
+                    return "pending", None
                 latest = {}
                 for r in call("GET", "/repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha))["check_runs"]:
                     if r["name"] in contexts and r["id"] > latest.get(r["name"], {"id": -1})["id"]:
                         latest[r["name"]] = r
                 if any(r["status"] == "completed" and r["conclusion"] not in OK for r in latest.values()):
-                    return "failed"
+                    return "failed", None
                 if len(latest) < len(contexts) or any(r["status"] != "completed" for r in latest.values()):
-                    return "pending"
-                return "green"
+                    return "pending", None
+                done = [r["completed_at"] for r in latest.values() if r.get("completed_at")]
+                return "green", max(done) if done else None
+
+            def just_finished(done):
+                if not done:
+                    return False
+                then = datetime.datetime.strptime(done, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+                return (datetime.datetime.now(datetime.timezone.utc) - then).total_seconds() < GRACE
+
+            def why_blocked(repo, n):
+                commits = call("GET", "/repos/%s/pulls/%d/commits?per_page=100" % (repo, n))
+                bad = ["%s by %s <%s>" % (c["sha"][:10], c["commit"]["author"]["name"], c["commit"]["author"]["email"]) for c in commits
+                       if c.get("author") is None and not c["commit"]["author"]["name"].endswith("[bot]")]
+                if bad:
+                    return ("GitHub cannot map the author of these commits to a user, and the ruleset blocks unattributed changes: " + "; ".join(bad)
+                            + ". Recreate the branch from main with one squashed commit made under a real identity (no force push).")
+                return "every required check is green and the merge is still blocked by a rule the API does not name: read the merge box of the PR."
+
+            def park(repo, p, dry):
+                n = p["number"]
+                if LABEL in [l["name"] for l in p.get("labels", [])]:
+                    print("#%d: blocked with green checks, already labelled %s, skipped" % (n, LABEL))
+                    return
+                if dry:
+                    print("dry run, would label and comment #%d" % n)
+                    return
+                try:
+                    call("POST", "/repos/%s/labels" % repo, {"name": LABEL, "color": "b60205", "description": "blocked from merging with every required check green"})
+                except RuntimeError as e:
+                    if " 422 " not in str(e):
+                        raise
+                call("POST", "/repos/%s/issues/%d/labels" % (repo, n), {"labels": [LABEL]})
+                call("POST", "/repos/%s/issues/%d/comments" % (repo, n), {"body": "The merge queue skips this PR: " + why_blocked(repo, n)})
+                print("#%d: blocked with green checks, labelled %s and commented, skipped" % (n, LABEL))
 
             def run(env):
                 repo, dry = env["REPO"], env["DRY_RUN"] == "true"
@@ -93,7 +130,12 @@ jobs:
                     if state == "dirty":
                         print("#%d: conflicts with main, skipped" % p["number"])
                         continue
-                    checks = verdict(repo, p["head"]["sha"], contexts)
+                    checks, done = verdict(repo, p["head"]["sha"], contexts)
+                    if state == "blocked" and checks == "green" and not just_finished(done):
+                        park(repo, p, dry)
+                        continue
+                    if LABEL in [l["name"] for l in p.get("labels", [])] and not dry:
+                        call("DELETE", "/repos/%s/issues/%d/labels/%s" % (repo, p["number"], LABEL))
                     if checks == "failed":
                         print("#%d: a required check failed, skipped" % p["number"])
                     elif state != "behind":

@@ -1,4 +1,4 @@
-import http.server, json, os, subprocess, sys, threading
+import http.server, json, os, subprocess, sys, threading, urllib.parse
 
 DIR = sys.argv[1]
 SC = {}
@@ -19,8 +19,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/repos/cocreiamo/x/compare/base...head?"):
-            page = int(self.path.split("page=")[1].split("&")[0])
-            per = int(self.path.split("per_page=")[1].split("&")[0])
+            q = urllib.parse.parse_qs(self.path.split("?")[1])
+            page, per = int(q["page"][0]), int(q["per_page"][0])
             raw = json.dumps({"commits": SC["commits"][(page - 1) * per:page * per]}).encode()
             self.send_response(200)
         else:
