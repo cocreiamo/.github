@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#MISE description="git-env-cleared refuses a script that creates a git repository (init, worktree add, with or without -C/-c options) without clearing git rev-parse --local-env-vars, skips vendored copies, comments and unscanned directories, and accepts the clearing in each repository's form"
+# git-env-cleared-test [path of git-env-cleared]: the default is the copy next to this script (a vendored copy sits wherever .github/shared-scripts puts it).
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+check=${1:-$here/git-env-cleared}
+[ -x "$check" ] || fail "no executable check at $check"
+check=$(cd "$(dirname "$check")" && pwd)/$(basename "$check")
+git_env_clear
+tmpdir
+G=git
+clear_line='while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)'
+
+# repo: a fresh tree in $tmp/r with a manifest naming one vendored copy
+repo() {
+  rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github" "$tmp/r/mise-tasks/test" "$tmp/r/lib" "$tmp/r/tools/tests/lib"
+  printf '# canonical-name  local-path\nwt-gc mise-tasks/wt/gc\n\nfoo lib/vendored.sh\n' > "$tmp/r/.github/shared-scripts"
+}
+put() { mkdir -p "$(dirname "$tmp/r/$1")"; cat > "$tmp/r/$1"; }
+run() { (cd "$tmp/r" && "$check" "$@") >"$tmp/out" 2>&1; }
+refuses() { # <label> <file named in the refusal> <dirs...>
+  local label=$1 file=$2; shift 2
+  if run "$@"; then fail "accepted: $label"; fi
+  grep -qF "$file" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal of '$label' does not name $file"; }
+  grep -qF 'local-env-vars' "$tmp/out" || fail "the refusal of '$label' does not say what to clear"
+}
+accepts() { run "$@" || { cat "$tmp/out" >&2; fail "refused: $1"; }; }
+
+for cmd in "$G init -q d" "$G -C d init" "$G -c user.name=t init d" "$G --git-dir=x init" "$G worktree add ../w" "$G -C d worktree add ../w" "cd d && $G init"; do
+  repo
+  printf '#!/usr/bin/env bash\nset -e\n%s\n' "$cmd" | put mise-tasks/test/bad
+  refuses "$cmd" mise-tasks/test/bad mise-tasks lib
+done
+
+repo; printf '#!/usr/bin/env bash\n%s\n%s\n' "$clear_line" "$G init -q d" | put mise-tasks/test/good
+accepts mise-tasks lib
+
+repo; printf '#!/usr/bin/env bash\n. "$(dirname "$0")/testlib.sh"\ngit_env_clear\n%s\n' "$G init -q d" | put mise-tasks/test/good
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n. "$(dirname "$0")/../lib/hermetic-git.sh"\n%s\n' "$G init -q d" | put tools/tests/good
+accepts tools
+
+repo; printf '#!/usr/bin/env bash\n# clears git rev-parse --local-env-vars someday\n%s\n' "$G init -q d" | put mise-tasks/test/bad
+refuses "the clearing only in a comment" mise-tasks/test/bad mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n# run %s then check\necho nothing\n' "$G init" | put mise-tasks/test/prose
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G status" | put mise-tasks/test/plain
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put lib/vendored.sh
+accepts lib
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put mise-tasks/wt/gc
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put elsewhere/bad
+accepts mise-tasks lib
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put elsewhere/bad
+refuses "a file passed by name" elsewhere/bad elsewhere/bad
+
+repo; rm "$tmp/r/.github/shared-scripts"; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put lib/vendored.sh
+refuses "a repository with no manifest" lib/vendored.sh lib
+
+repo; printf 'run %s to start\n' "$G init -q d" | put mise-tasks/README.md
+accepts mise-tasks
+
+repo; printf 'echo hi\n%s\n' "$G init -q d" | put mise-tasks/test/noshebang.sh
+refuses "a .sh file with no shebang" mise-tasks/test/noshebang.sh mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put 'mise-tasks/test/with space'
+refuses "a file name with a space" 'mise-tasks/test/with space' mise-tasks
+
+repo; head -c 300 /dev/urandom > "$tmp/r/mise-tasks/blob.bin"
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put mise-tasks/test/bad
+accepts_nothing=0; (cd "$tmp/r" && "$check") >"$tmp/out" 2>&1 || accepts_nothing=$?
+[ "$accepts_nothing" = 2 ] || fail "no directory argument must be a usage error (exit 2), got $accepts_nothing"
+if run no-such-dir; then fail "accepted a directory that does not exist"; fi
+
+# tracked files only inside a repository: an ignored file is not scanned
+repo
+git_repo "$tmp/r"
+printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put mise-tasks/test/ignored
+printf 'mise-tasks/test/ignored\n' > "$tmp/r/.gitignore"
+accepts mise-tasks
+printf '#!/usr/bin/env bash\n%s\n' "$G init -q d" | put mise-tasks/test/tracked
+"$G" -C "$tmp/r" add mise-tasks/test/tracked
+refuses "a staged file" mise-tasks/test/tracked mise-tasks
+echo "git-env-cleared ok"

@@ -55,6 +55,7 @@ jobs:
       - run: bash tests/test-first.sh
       - run: bash tests/testlib.sh
       - run: bash tests/commit-identity.sh
+      - run: bash tests/git-env-cleared.sh
       - run: bash tests/stalled-prs.sh
       - run: bash tests/pr-wait.sh
       - run: bash tests/heavy-lock.sh
