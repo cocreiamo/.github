@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Refuses a commit whose author or committer email is on a reserved test domain (example, *.example, example.*, invalid, *.invalid, test, *.test, localhost, *.localhost)"
+# A pre-commit hook script (entry: <path> in .pre-commit-config.yaml, always_run, pass_filenames false, or called from a git hook). Tests commit in their own
+# repositories as t@example.invalid; an agent that copies that identity, or a test whose git leaks into the real repository, lands a commit GitHub
+# cannot attribute, and the unattributed-changes rule blocks its PR. It reads what git would use (git var), so it sees GIT_AUTHOR_*, GIT_COMMITTER_* and the config.
+set -euo pipefail
+status=0
+for who in AUTHOR COMMITTER; do
+  ident=$(git var "GIT_${who}_IDENT")
+  email=${ident#*<}
+  email=${email%%>*}
+  domain=${email##*@}
+  domain=${domain,,}
+  case "$domain" in
+  example | example.* | *.example | invalid | *.invalid | test | *.test | localhost | *.localhost)
+    echo "the commit ${who,,} is $email, a reserved test domain: commit as yourself (git config user.email)" >&2
+    status=1
+    ;;
+  esac
+done
+exit "$status"
