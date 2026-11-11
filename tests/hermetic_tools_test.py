@@ -1,3 +1,5 @@
+import pathlib
+import tempfile
 import unittest
 
 import hermetic_tools as ht
@@ -20,3 +22,14 @@ class Lexer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Declared(unittest.TestCase):
+    def test_the_tools_of_the_shared_conf_d_file_count_as_pinned(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / ".config/mise/conf.d").mkdir(parents=True)
+            (root / "mise.toml").write_text('[tools]\nyq = "4.54.3"\n')
+            (root / ".config/mise/conf.d/shared-tools.toml").write_text('[tools]\nshellcheck = "0.11.0"\n"pipx:yamllint" = "1.38.0"\n')
+            names = ht.declared(root / "mise.toml")
+        self.assertTrue({"yq", "shellcheck", "yamllint"} <= names)

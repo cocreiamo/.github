@@ -1,0 +1,7 @@
+id: dotgithub/test/lint-baseline.sh
+repo: dotgithub
+invariant: 'The shared lint baseline runs shellcheck, shfmt, ruff, yamllint and gitleaks on the tracked files of a repository and skips vendored copies and tests/*/bad|good fixtures; lint-baseline refuses each tool''s bad case and one part never fails for another.'
+runs:
+- pr-ci
+command: bash tests/lint-baseline.sh
+file: tests/lint-baseline.sh

@@ -20,6 +20,7 @@ trap cleanup EXIT
 # A merge of a newer main into the branch brings main's commits into BASE..HEAD: they are not the branch's to prove, so
 # whatever the current main (TEST_FIRST_MAIN, default origin/main) already holds is left out. A fix: merged in from any
 # other branch still counts.
+# git-env-cleared: allow it replays the history of the repository it runs in
 main_ref=${TEST_FIRST_MAIN:-origin/main}
 exclude=()
 git rev-parse --verify -q "$main_ref^{commit}" >/dev/null && exclude=(--not "$main_ref")

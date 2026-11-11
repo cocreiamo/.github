@@ -57,6 +57,12 @@ jobs:
       - run: bash tests/pins-consistent.sh
       - run: bash tests/test-first.sh
       - run: bash tests/testlib.sh
+      - run: bash tests/commit-identity.sh
+      - run: shared/scripts/git-env-cleared tests hooks shared/scripts tools
+      - run: bash tests/git-env-cleared.sh
+      - run: shared/scripts/lint-baseline secrets
+      - run: bash tests/lint-baseline.sh
+      - run: bash tests/mise-tools.sh
       - run: bash tests/stalled-prs.sh
       - run: bash tests/pr-wait.sh
       - run: bash tests/heavy-lock.sh

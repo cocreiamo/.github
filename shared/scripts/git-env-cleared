@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#MISE description="Every own shell script that creates a git repository (git init, git worktree add, with or without -C/-c options) clears git rev-parse --local-env-vars first; vendored copies (.github/shared-scripts) are skipped"
+# git-env-cleared <dir|file>...   run from the repository root; exit 1 naming each offender, 2 on a usage error.
+# Inside a git hook GIT_DIR, GIT_CONFIG and friends point at the real repository: a test that runs git init or git config
+# there once set commit.gpgsign=false in the real config. A script that creates a repository must unset them first:
+#   while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
+# (or call git_env_clear from testlib.sh, or source a hermetic-git.sh). Shell scripts only (*.sh or a bash/sh shebang), tracked files only inside a
+# repository (a plain directory is walked); comment lines count for nothing, in either direction. The vendored copies listed in .github/shared-scripts
+# change only in cocreiamo/.github and are not checked here. A script that drives the repository it runs in on purpose says so in a comment:
+#   # git-env-cleared: allow <reason>     (a marker with no reason is refused)
+set -euo pipefail
+[ "$#" -gt 0 ] || { echo "usage: git-env-cleared <dir|file>... (from the repository root)" >&2; exit 2; }
+for arg in "$@"; do [ -e "$arg" ] || { echo "git-env-cleared: $arg does not exist" >&2; exit 2; }; done
+
+creates='(^|[^[:alnum:]_./-])git( +-[-A-Za-z]+(=[^ ]*)?( +[^ -][^ ]*)?)* +(init|worktree +add)([[:space:]]|$)'
+clears='local-env-vars|git_env_clear|hermetic-git\.sh'
+
+declare -A vendored=()
+if [ -f .github/shared-scripts ]; then
+  while read -r _ path _; do [ -z "${path:-}" ] || vendored["$path"]=1; done < <(grep -vE '^[[:space:]]*(#|$)' .github/shared-scripts)
+fi
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  files() { git ls-files -z --cached -- "$@"; }
+else
+  files() { find "$@" -type f -not -path '*/.git/*' -print0; }
+fi
+
+status=0
+scanned=0
+while IFS= read -r -d '' f; do
+  f=${f#./}
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  [ -z "${vendored[$f]:-}" ] || continue
+  case "$f" in
+  *.sh) ;;
+  *) head -n 1 "$f" 2>/dev/null | grep -aqE '^#!.*(bash|/sh|dash|env +(-S +)?sh)( |$)' || continue ;;
+  esac
+  scanned=$((scanned + 1))
+  code=$(grep -aEv '^[[:space:]]*#' "$f" || true)
+  grep -qE "$creates" <<<"$code" || continue
+  grep -qE "$clears" <<<"$code" && continue
+  grep -qE '^[[:space:]]*#[[:space:]]*git-env-cleared: allow +[^[:space:]]' "$f" && continue
+  echo "$f creates a git repository without clearing git's local environment first: while read -r v; do unset \"\$v\"; done < <(git rev-parse --local-env-vars) (or git_env_clear from testlib.sh)" >&2
+  status=1
+done < <(files "$@")
+[ "$status" -ne 0 ] || echo "git-env-cleared: ok ($scanned scripts)"
+exit "$status"
