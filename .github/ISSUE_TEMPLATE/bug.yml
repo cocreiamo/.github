@@ -1,0 +1,23 @@
+name: Bug
+description: Something does not work as intended
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: The facts, with the error text or the link to the failing run.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The commands or the steps, from a clean checkout.
+    validations:
+      required: false

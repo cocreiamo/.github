@@ -1,0 +1,27 @@
+extends: default
+ignore: |
+  ansible/collections/
+  secrets/
+  .terraform/
+  platform/*/charts/
+  platform/*/*.enc.yaml
+  apps/*/*/*.enc.yaml
+  platform/traefik-config/plugins/
+  tests/rendered/*-bad/
+  tests/lint/bad/
+  platform/gateway-api-crds/upstream/standard-install.yaml
+  platform/system-upgrade-controller/upstream/crd.yaml
+  platform/system-upgrade-controller/upstream/system-upgrade-controller.yaml
+  platform/keycloak/upstream/keycloaks.k8s.keycloak.org-v1.yml
+  platform/keycloak/upstream/keycloakrealmimports.k8s.keycloak.org-v1.yml
+  platform/keycloak/upstream/keycloakoidcclients.k8s.keycloak.org-v1.yml
+  platform/keycloak/upstream/keycloaksamlclients.k8s.keycloak.org-v1.yml
+  platform/keycloak/upstream/kubernetes.yml
+rules:
+  line-length: disable
+  document-start: disable
+  truthy: {check-keys: false}
+  comments: {min-spaces-from-content: 1}
+  comments-indentation: disable
+  braces: {max-spaces-inside: 1}
+  indentation: {spaces: consistent, indent-sequences: consistent}

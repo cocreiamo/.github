@@ -1,0 +1,21 @@
+[files]
+extend-exclude = [
+  "seed/",
+  "secrets/",
+  "ansible/collections/",
+  ".terraform/",
+  "*.age",
+  "*.enc.yaml",
+  "platform/dashboards/files/",
+  "platform/traefik-config/plugins/",
+  "schemas/kargo/",
+  "platform/*/upstream/",
+]
+
+[default.extend-words]
+rto = "rto"
+fo = "fo"
+macchine = "macchine"
+scap = "scap"
+alls = "alls"
+passt = "passt"

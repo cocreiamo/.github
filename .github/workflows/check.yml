@@ -45,6 +45,9 @@ jobs:
       - run: bash tests/workflow-actions-read.sh
       - run: bash tests/shared-rules.sh
       - run: bash tests/shared-scripts.sh
+      - run: bash tests/shared-configs.sh
+      - run: bash tests/shared-config-content.sh
+      - run: bash tests/community-files.sh
       - run: bash tests/claude-telemetry.sh
       - run: bash tests/eol-check.sh
       - run: bash tests/hermetic-tools.sh
