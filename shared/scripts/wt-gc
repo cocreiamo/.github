@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. Run after every merge and at session start."
+#MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. never touch a branch with unpushed commits or with branch.<name>.wtgc-hold true; run after every merge and at session start."
 # --orphans runs only what needs no git and no gh, in any directory: the Bazel orphan sweep and the expiry of archives; it combines with --dry-run. workstation:trim runs it daily.
 # Archives (<archive dir>/<repo>/<date>/*.{uncommitted.patch,untracked.tgz,bundle}) older than WT_ARCHIVE_DAYS (default 30) are deleted by every run, and the date directories they leave empty.
 # --dry-run (-n) changes nothing: it prints "would remove|archive|delete" for what a real run does.
@@ -8,6 +8,8 @@
 # Bazel: removing a worktree first stops its Bazel server (bazel shutdown run in it; the server pid is killed when bazel is not installed), then removes its output base
 # (<output user root>/<md5 of the workspace path>, 20+ GB each). Output bases whose workspace no longer exists and whose server is not running are swept too.
 # Build outputs are reproducible, so nothing of them is archived. The install base, the disk cache and the repository cache are never touched. WT_GC_BAZEL_ROOT overrides the output user root.
+# Unpushed work: a local branch with a commit reachable from no remote-tracking ref (git rev-list <branch> --not --remotes) is never archived, removed or deleted, whatever its age, and neither is its worktree: it is only reported.
+# Hold: git config branch.<name>.wtgc-hold true keeps that branch (and its worktree) regardless of PR state and age.
 # Remote branches: deleted only when the PR is closed unmerged, the tip is the one the PR closed with and it is stale; GitHub keeps the PR and its "Restore branch". Without any PR or younger: report-only.
 set -euo pipefail
 
@@ -222,6 +224,10 @@ done < <(git worktree list --porcelain; echo)
 
 handle() {
   local branch="$1" path="$2" rows tip n merged_oid who idle files why
+  if [ "$(git config --type=bool --get "branch.$branch.wtgc-hold" 2>/dev/null || true)" = true ]; then
+    echo "skip   $branch: held by branch.$branch.wtgc-hold"
+    return
+  fi
   rows="$(prs --head "$branch" --state all)"
   if awk '$3 == "OPEN" { f = 1 } END { exit !f }' <<<"$rows"; then
     echo "skip   $branch: PR open"
@@ -230,6 +236,11 @@ handle() {
   if ! awk '$3 == "MERGED" { f = 1 } END { exit !f }' <<<"$rows"; then
     n="$(awk '$3 == "CLOSED" { print "#" $2; exit }' <<<"$rows")"
     why="no PR"
+    if [ -n "$(git rev-list -1 "refs/heads/$branch" --not --remotes)" ]; then
+      echo "skip   $branch: unpushed work, kept"
+      if [ -n "$path" ]; then report+=("worktree $branch ($path): unpushed work, kept"); else report+=("branch $branch: unpushed work, kept"); fi
+      return
+    fi
     [ -z "$n" ] || why="PR $n closed, not merged"
     idle="$(idle_seconds "$branch" "$path")"
     if [ "$idle" -lt $((stale_hours * 3600)) ]; then
