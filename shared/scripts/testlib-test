@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="shared/scripts/testlib.sh: fail exits 1 with FAIL on stderr; tmpdir makes a directory removed at exit; stub_bin puts an executable stub first on PATH; fake_gh answers gh api per canned route and refuses what it does not know"
+#MISE description="shared/scripts/testlib.sh: fail exits 1 with FAIL on stderr; tmpdir makes a directory removed at exit; stub_bin puts an executable stub first on PATH; fake_gh answers gh api per canned route and refuses what it does not know; git_env_clear unsets git's local environment; git_repo makes a throwaway repository that no hook or config of the real one reaches"
 # shellcheck disable=SC1090,SC1091,SC2154 # the library is sourced by a computed path; $tmp comes from it
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -49,4 +49,29 @@ rc=0; gh pr list >"$tmp/o" 2>"$tmp/e" || rc=$?
 grep -qF 'repos/o/r/pulls/7' "$FAKE_GH_LOG" || fail "the calls are not logged in \$FAKE_GH_LOG"
 fake_gh_route repos/o/r/pulls/7 '{"number":70}'
 [ "$(gh api repos/o/r/pulls/7 --jq .number)" = 70 ] || fail "registering a route again must replace it"
+
+# git_env_clear: inside a git hook GIT_DIR and friends point at the real repository
+real=$(mktemp -d); trap 'rm -rf "$real"' EXIT
+vcs() { git "$@"; }
+vcs init -q "$real/r"
+( . "$lib"
+  export GIT_DIR="$real/r/.git" GIT_WORK_TREE="$real/r" GIT_INDEX_FILE="$real/r/.git/index" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true
+  git_env_clear
+  [ -z "$(env | grep -E '^GIT_(DIR|WORK_TREE|INDEX_FILE|CONFIG_COUNT|CONFIG_KEY_0)=' || true)" ] ) || fail "git_env_clear left a local git variable set"
+( . "$lib"; export GIT_AUTHOR_NAME=keep; git_env_clear; [ "${GIT_AUTHOR_NAME:-}" = keep ] ) || fail "git_env_clear must not unset what is not a local variable"
+
+# git_repo <dir>: a repository on main with a test identity and no signing, set in its own config only
+before=$(git -C "$real/r" config --local --list | sort)
+( . "$lib"
+  tmpdir
+  export GIT_DIR="$real/r/.git" GIT_WORK_TREE="$real/r"
+  git_repo "$tmp/t"
+  unset GIT_DIR GIT_WORK_TREE
+  [ "$(git -C "$tmp/t" rev-parse --abbrev-ref HEAD)" = main ] || { echo "the branch is not main" >&2; exit 1; }
+  [ "$(git -C "$tmp/t" config user.email)" = t@example.invalid ] || { echo "no test identity" >&2; exit 1; }
+  [ "$(git -C "$tmp/t" config commit.gpgsign)" = false ] || { echo "signing is not off" >&2; exit 1; }
+  [ "$(git -C "$tmp/t" rev-parse --show-toplevel)" = "$(cd "$tmp/t" && pwd -P)" ] || { echo "the repository is not its own" >&2; exit 1; }
+  echo x > "$tmp/t/f"; git -C "$tmp/t" add f; vcs -C "$tmp/t" commit -qm "test: x"
+) || fail "git_repo did not make a usable throwaway repository"
+[ "$before" = "$(git -C "$real/r" config --local --list | sort)" ] || fail "git_repo changed the config of the repository the hook runs in"
 echo "testlib ok"
