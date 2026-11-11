@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# usage: commons-sync [--check]
+# Materialises the configs and the founder section of the installed commons release in the current repository.
+# The release is the mise tool "github:cocreiamo/.github" (COMMONS_DIR overrides where it is installed). Declared in
+# ./.github/shared-configs, one «name path» per line (name inside the release's config/, path in this repository; «#» comments):
+# each path is made equal to the release's file, content and executable bit. If ./CLAUDE.md has the section
+# «## Working with the founder», it is made equal to the release's founder-section.md.
+# --check writes nothing, prints what differs and exits 1 (the repository's CI runs it); without it the files are rewritten.
+set -euo pipefail
+mode=sync
+case "${1:-}" in
+  '') ;;
+  --check) mode=check ;;
+  *) echo "usage: commons-sync [--check]" >&2; exit 2 ;;
+esac
+dir=${COMMONS_DIR:-$(mise where "github:cocreiamo/.github")}
+[ -f "$dir/founder-section.md" ] && [ -d "$dir/config" ] || { echo "commons-sync: $dir is not a commons release" >&2; exit 1; }
+rc=0
+heading='## Working with the founder'
+
+safe() { case $1 in /* | .. | ../* | */.. | */../*) return 1 ;; esac; }
+
+sync_file() {
+  local name=$1 path=$2
+  if [ -L "$path" ]; then
+    if [ "$mode" = check ]; then echo "$path: is a link, not a copy of $name" >&2; rc=1; return; fi
+    rm -f "$path"
+  fi
+  if [ -f "$path" ] && cmp -s "$dir/config/$name" "$path" && [ "$([ -x "$path" ] && echo x)" = "$([ -x "$dir/config/$name" ] && echo x)" ]; then return; fi
+  if [ "$mode" = check ]; then
+    echo "$path differs from config/$name of the commons release (- release, + here)" >&2
+    if [ -f "$path" ]; then diff -u "$dir/config/$name" "$path" >&2 || true; else echo "$path is missing" >&2; fi
+    rc=1
+    return
+  fi
+  mkdir -p "$(dirname "$path")"
+  cat "$dir/config/$name" > "$path"
+  if [ -x "$dir/config/$name" ]; then chmod 755 "$path"; else chmod 644 "$path"; fi
+  echo "wrote $path"
+}
+
+if [ -f .github/shared-configs ]; then
+  while read -r name path _; do
+    case ${name:-} in '' | '#'*) continue ;; esac
+    [[ $name =~ ^[A-Za-z0-9._/-]+$ ]] && [ -f "$dir/config/$name" ] && [ -n "${path:-}" ] || { echo ".github/shared-configs: bad line: $name ${path:-}" >&2; exit 1; }
+    if ! safe "$name" || ! safe "$path"; then echo ".github/shared-configs: $name or $path leaves its directory" >&2; exit 1; fi
+    sync_file "$name" "$path"
+  done < .github/shared-configs
+fi
+
+if [ -f CLAUDE.md ] && grep -qx "$heading" CLAUDE.md; then
+  canonical=$(cat "$dir/founder-section.md")
+  section=$(awk -v h="$heading" '
+    $0 == h { f = 1 }
+    f && /^## / && $0 != h { exit }
+    f { if ($0 == "") { blank = blank "\n"; next } printf "%s", blank; blank = ""; print }
+  ' CLAUDE.md)
+  if [ "$section" != "$canonical" ]; then
+    if [ "$mode" = check ]; then
+      echo "the '$heading' section of CLAUDE.md differs from founder-section.md of the commons release (- release, + here)" >&2
+      diff -u <(printf '%s\n' "$canonical") <(printf '%s\n' "$section") >&2 || true
+      rc=1
+    else
+      tmp=$(mktemp)
+      trap 'rm -f "$tmp"' EXIT
+      awk -v h="$heading" -v canonical="$canonical" '
+        $0 == h { print canonical; skip = 1; next }
+        skip && /^## / { skip = 0; print ""; print; next }
+        !skip { print }
+      ' CLAUDE.md > "$tmp"
+      cat "$tmp" > CLAUDE.md
+      echo "wrote the founder section of CLAUDE.md"
+    fi
+  fi
+fi
+exit "$rc"
