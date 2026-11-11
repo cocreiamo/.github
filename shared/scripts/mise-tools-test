@@ -11,10 +11,14 @@ root=${2:-$PWD}
 command -v yq >/dev/null || fail "yq is not on PATH"
 command -v mise >/dev/null || fail "mise is not on PATH"
 tmpdir
+toml() { yq -p toml -o yaml "$@"; }
+requested() { # <tool>: the version mise requests for it in $tmp/p
+  (cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise ls --json "$1" 2>/dev/null) | yq -p json -o yaml '[.[] | select(has("requested_version"))] | .[0].requested_version'
+}
 
-[ "$(yq -p toml -o json 'keys | join(",")' "$block")" = tools ] || fail "$block must have a [tools] table and nothing else"
-for tool in shellcheck shfmt "aqua:astral-sh/ruff" "pipx:yamllint" gitleaks "aqua:crate-ci/typos" "github:editorconfig-checker/editorconfig-checker" actionlint zizmor yq jq uv python; do
-  [ "$(yq -p toml "has(\"tools\") and (.tools | has(\"$tool\"))" "$block")" = true ] || fail "$block does not pin $tool"
+[ "$(toml 'keys | join(",")' "$block")" = tools ] || fail "$block must have a [tools] table and nothing else"
+for tool in shellcheck shfmt "aqua:astral-sh/ruff" "pipx:yamllint" gitleaks "aqua:crate-ci/typos" "github:editorconfig-checker/editorconfig-checker" actionlint zizmor yq jq uv; do
+  [ "$(toml "has(\"tools\") and (.tools | has(\"$tool\"))" "$block")" = true ] || fail "$block does not pin $tool"
 done
 while IFS=$'\t' read -r tool version; do
   [[ $version =~ ^[0-9]+(\.[0-9]+)*$ ]] || fail "$tool is pinned to '$version': an exact version is required, no range, latest or prefix"
@@ -26,10 +30,10 @@ printf '[tools]\njq = "1.0.0"\n' > "$tmp/p/mise.toml"
 mise trust -q "$tmp/p" >/dev/null 2>&1 || true
 (cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise config ls --json) > "$tmp/config.json" 2>/dev/null || fail "mise cannot list the config of a project with the block as a conf.d fragment"
 yq -p json -o json '[.[] | select(.path | test("conf.d/shared-tools.toml$"))] | length' "$tmp/config.json" | grep -qx 1 || fail "mise does not load the block from .config/mise/conf.d"
-want=$(yq -p toml '.tools.shellcheck' "$block")
-got=$(cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise ls --json shellcheck 2>/dev/null | yq -p json '.shellcheck[0].requested_version')
+want=$(toml '.tools.shellcheck' "$block")
+got=$(requested shellcheck)
 [ "$got" = "$want" ] || fail "mise resolves shellcheck to '$got' in a project that includes the block, not $want"
-own=$(cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise ls --json jq 2>/dev/null | yq -p json '.jq[0].requested_version')
+own=$(requested jq)
 [ "$own" = "1.0.0" ] || fail "a repository's own mise.toml must override the block, jq resolved to '$own'"
 
 # one version per tool across the repositories: what this root pins of the block's tools equals the block

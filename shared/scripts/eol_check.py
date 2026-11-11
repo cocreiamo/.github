@@ -160,7 +160,7 @@ def discover(roots):
         for path in files_of(root):
             rel = path.relative_to(root)
             text = path.read_text(errors="ignore") if path.stat().st_size < 2_000_000 else ""
-            if path.name == "mise.toml":
+            if path.name == "mise.toml" or (path.suffix == ".toml" and rel.parent.as_posix().endswith(".config/mise/conf.d")):
                 section = ""
                 for line in text.splitlines():
                     if line.startswith("["):

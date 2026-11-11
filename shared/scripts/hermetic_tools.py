@@ -6,6 +6,7 @@ simple command (after a newline, ; & | ( ) { }, `$(`, a backtick, then, do, else
 defined in the same file, variable assignments and paths (a word with a slash, which is a script of this repository) are
 not commands to resolve.
 """
+import pathlib
 import re
 import subprocess
 import sys
@@ -251,12 +252,18 @@ def function_names(paths):
 
 
 def declared(mise_toml):
-    with open(mise_toml, "rb") as f:
-        tools = tomllib.load(f).get("tools", {})
+    mise_toml = pathlib.Path(mise_toml)
+    # mise loads the .config/mise/conf.d fragments (the vendored shared tools block) with the project's mise.toml
+    files = [mise_toml, *sorted((mise_toml.parent / ".config" / "mise" / "conf.d").glob("*.toml"))]
     names = set()
-    for key in tools:
-        binary = re.split(r"[:/]", key)[-1]
-        names.update(BINARIES.get(binary, [binary]))
+    for path in files:
+        if not path.exists():
+            continue
+        with open(path, "rb") as f:
+            tools = tomllib.load(f).get("tools", {})
+        for key in tools:
+            binary = re.split(r"[:/]", key)[-1]
+            names.update(BINARIES.get(binary, [binary]))
     return names
 
 
