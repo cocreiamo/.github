@@ -1,0 +1,76 @@
+# Reusable: proves the post-merge path on the head of main (or a commit) without writing anything. The revert has never fired for real,
+# so a decision that no longer computes (the API, the token, the pinned workflows) is found here and not on the day main is red.
+# dry-run runs the revert decision, dry-run-green the green one (green: false skips it), and a red of either opens the issue
+# "post-merge revert dry run red: dry-run" (label post-merge-dry-run-red, assigned to the founder) through post-merge-alert.yml.
+# A caller adds (monthly, and by hand; the caller sets no concurrency of its own):
+#   on:
+#     schedule: [{cron: "17 6 1 * *"}]
+#     workflow_dispatch: {inputs: {sha: {description: commit to judge, default the head of the branch, type: string, default: ""}}}
+#   permissions: {}
+#   jobs:
+#     selftest:
+#       permissions: {actions: write, issues: write}
+#       uses: cocreiamo/.github/.github/workflows/post-merge-selftest.yml@<sha>
+#       with: {sha: "${{ inputs.sha }}", green: true}
+#       secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
+# The caller grants actions: write and issues: write; the variable CLAUDE_CODE_PR_APP_ID of the caller is the App id.
+name: post-merge-selftest
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: commit to judge, default the head of the branch the run is on
+        type: string
+        default: ""
+      green:
+        description: also dry-run the decision that closes reverts after a green main
+        type: boolean
+        default: true
+    secrets:
+      app-private-key:
+        required: true
+concurrency:
+  group: post-merge-selftest-${{ github.repository }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  dry-run:
+    permissions:
+      actions: write
+      issues: write
+    uses: cocreiamo/.github/.github/workflows/post-merge-revert.yml@21d09a0af4d1212f650aac3bb9e3233e9c656263 # main
+    with:
+      failed: "dry run"
+      ignore-head-green: true
+      sha: ${{ inputs.sha }}
+      dry-run: true
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.app-private-key }}
+
+  dry-run-green:
+    if: ${{ inputs.green }}
+    permissions:
+      actions: read
+    uses: cocreiamo/.github/.github/workflows/post-merge-green.yml@21d09a0af4d1212f650aac3bb9e3233e9c656263 # main
+    with:
+      sha: ${{ inputs.sha }}
+      dry-run: true
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.app-private-key }}
+
+  dry-run-red:
+    needs: [dry-run, dry-run-green]
+    if: ${{ always() && (needs.dry-run.result == 'failure' || needs.dry-run-green.result == 'failure') }}
+    permissions:
+      actions: read
+      issues: write
+    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@21d09a0af4d1212f650aac3bb9e3233e9c656263 # main
+    with:
+      failed: "dry-run"
+      title-prefix: "post-merge revert dry run red: "
+      label: post-merge-dry-run-red
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.app-private-key }}

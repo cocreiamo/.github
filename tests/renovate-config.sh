@@ -24,7 +24,7 @@ cmd=$(jq -r '.packageRules[] | select(.postUpgradeTasks) | .postUpgradeTasks.com
 allowed=$(cat renovate/allowed-commands.regex)
 grep -Eq "$allowed" <<<"$cmd" || fail "the postUpgradeTasks command does not match renovate/allowed-commands.regex: $cmd"
 if grep -Eq "$allowed" <<<"${cmd/sync-founder-section/other}"; then fail "the allowed-commands regex accepts another script"; fi
-in_workflow=$(yq -N '.jobs.renovate.steps[] | select(.uses == "renovate*") | .env.RENOVATE_ALLOWED_COMMANDS' .github/workflows/renovate.yml | jq -r '.[0]')
+in_workflow=$(yq -N '.jobs.renovate.steps[] | select(.name == "extra environment") | .env.BASE_COMMAND' .github/workflows/renovate.yml)
 [ "$in_workflow" = "$allowed" ] || fail "renovate.yml allows a command other than renovate/allowed-commands.regex"
 for perm in statuses checks; do
   [ "$(yq -N ".jobs.renovate.steps[] | select(.uses == \"actions/create-github-app-token*\") | .with.permission-$perm" .github/workflows/renovate.yml)" = read ] \
