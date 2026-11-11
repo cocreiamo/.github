@@ -81,12 +81,17 @@ stale_wt() {
   fi
   find "$WT_ROOT/$1" -name .git -prune -o -type f -exec touch -d '3 days ago' {} +
 }
-for t in stale stale-nopr stale-clean stale-open stale-held stale-touched; do
+for t in stale stale-nopr stale-clean stale-open stale-held stale-touched stale-local stale-hold; do
   if [ "$t" = stale-clean ]; then stale_wt "$t" none origin/main~1; else stale_wt "$t"; fi
 done
 touch "$WT_ROOT/stale-touched/just-now"
+git config branch.chore/stale-hold.wtgc-hold true
 tree="$(git rev-parse "origin/main^{tree}")"
 aged git branch chore/stale-branch "$(aged git commit-tree -p origin/main -m "chore: old branch" "$tree")"
+aged git branch chore/stale-local-branch "$(aged git commit-tree -p origin/main -m "chore: old local-only branch" "$tree")"
+git init -q --bare -b main "$tmp/mirror.git"
+git remote add mirror "$tmp/mirror.git"
+git push -q mirror chore/stale chore/stale-nopr chore/stale-held chore/stale-touched chore/stale-hold chore/stale-branch
 old_remote="$(aged git commit-tree -p origin/main -m "chore: old remote" "$tree")"
 git push -q origin "$old_remote:refs/heads/chore/stale-remote-old" "$old_remote:refs/heads/chore/stale-remote-nopr" "$old_remote:refs/heads/chore/stale-remote-open"
 pr chore/stale CLOSED
@@ -137,6 +142,10 @@ check "wt:gc archives a stale closed-PR worktree: patch, untracked files and bun
 check "wt:gc archives and removes a stale worktree that has no PR" bash -c '[ ! -d "$WT_ROOT/stale-nopr" ] && ! git rev-parse -q --verify chore/stale-nopr && [ -s "$1/chore-stale-nopr.bundle" ]' _ "$arch"
 check "wt:gc removes a stale worktree with nothing to archive, writing no file" bash -c '[ ! -d "$WT_ROOT/stale-clean" ] && ! git rev-parse -q --verify chore/stale-clean && ! ls "$1"/chore-stale-clean.* 2>/dev/null' _ "$arch"
 check "wt:gc archives and removes a stale local branch without a worktree" bash -c '! git rev-parse -q --verify chore/stale-branch && [ -s "$1/chore-stale-branch.bundle" ] && [ ! -e "$1/chore-stale-branch.uncommitted.patch" ]' _ "$arch"
+check "wt:gc keeps a stale worktree whose commits exist on no remote, whole, and says it is unpushed work" bash -c '[ -d "$WT_ROOT/stale-local" ] && git rev-parse -q --verify chore/stale-local && [ -f "$WT_ROOT/stale-local/loose.txt" ] && ! ls "$1"/chore-stale-local.* 2>/dev/null && grep -q "unpushed work, kept.*chore/stale-local\|chore/stale-local.*unpushed work, kept" "$2" && grep -q "^report worktree chore/stale-local .*unpushed" "$2"' _ "$arch" "$tmp/gc"
+check "wt:gc keeps a stale local branch without a worktree whose commits exist on no remote" bash -c 'git rev-parse -q --verify chore/stale-local-branch && ! ls "$1"/chore-stale-local-branch.* 2>/dev/null && grep -q "^report branch chore/stale-local-branch: .*unpushed" "$2"' _ "$arch" "$tmp/gc"
+check "wt:gc --dry-run never offers to archive or remove unpushed work" bash -c '! grep -q "would .*chore/stale-local" "$1"' _ "$tmp/dry"
+check "wt:gc keeps a stale pushed branch with the wtgc-hold flag" bash -c '[ -d "$WT_ROOT/stale-hold" ] && git rev-parse -q --verify chore/stale-hold && ! ls "$1"/chore-stale-hold.* 2>/dev/null && grep -q "skip.*chore/stale-hold.*hold" "$2"' _ "$arch" "$tmp/gc"
 check "wt:gc prints where each archive went" bash -c 'grep -q "archived chore/stale.*$1/chore-stale.bundle" "$2"' _ "$arch" "$tmp/gc"
 check "wt:gc keeps a stale worktree whose PR is open" bash -c '[ -d "$WT_ROOT/stale-open" ] && git rev-parse -q --verify chore/stale-open'
 check "wt:gc keeps an old branch whose worktree files were modified recently, saying its age" bash -c '[ -d "$WT_ROOT/stale-touched" ] && grep -q "skip.*chore/stale-touched.*younger than 24h" "$1"' _ "$tmp/gc"
