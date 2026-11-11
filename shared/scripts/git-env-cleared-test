@@ -46,6 +46,12 @@ accepts tools
 repo; printf '#!/usr/bin/env bash\n# clears git rev-parse --local-env-vars someday\n%s\n' "$G init -q d" | put mise-tasks/test/bad
 refuses "the clearing only in a comment" mise-tasks/test/bad mise-tasks
 
+repo; printf '#!/usr/bin/env bash\n# git-env-cleared: allow it drives the repository the script runs in, on purpose\n%s\n' "$G worktree add ../w" | put mise-tasks/test/allowed
+accepts mise-tasks
+
+repo; printf '#!/usr/bin/env bash\n# git-env-cleared: allow\n%s\n' "$G worktree add ../w" | put mise-tasks/test/noreason
+refuses "an allow marker with no reason" mise-tasks/test/noreason mise-tasks
+
 repo; printf '#!/usr/bin/env bash\n# run %s then check\necho nothing\n' "$G init" | put mise-tasks/test/prose
 accepts mise-tasks
 
