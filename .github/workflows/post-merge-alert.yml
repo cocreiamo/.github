@@ -41,7 +41,7 @@ on:
 permissions: {}
 jobs:
   alert:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 10
     permissions:
       actions: read
