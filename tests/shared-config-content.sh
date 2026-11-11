@@ -15,7 +15,7 @@ cp "$configs/gitignore" "$tmp/repo/.gitignore"
 ignored=(
   .terraform/p x.tfplan plan-hetzner.txt summary.md drift.md x.dec.yaml .env a.pem infra-age.txt gha-creds-1.json ansible/collections/a
   __pycache__/a.pyc lib/__pycache__/a.pyc a.pyc .ruff_cache/a .hypothesis/a .pytest_cache/a mutants/a.py .venv/bin/python
-  platform/traefik/charts/a.yaml out/a bazel-bin/a bazel-out/a node_modules/a packages/x/node_modules/a _site/a user.bazelrc
+  platform/traefik/charts/a.yaml out/a bazel-bin/a bazel-out/a node_modules/a packages/x/node_modules/a _site/a user.bazelrc .lighthouseci/a apps/www/.lighthouseci/lhr.json
 )
 for p in "${ignored[@]}"; do
   git -C "$tmp/repo" check-ignore -q --no-index "$p" || fail "$p is not ignored"
@@ -23,7 +23,7 @@ done
 tracked=(
   README.md CLAUDE.md mise.toml .editorconfig .gitignore .yamllint.yaml ruff.toml .github/workflows/x.yml .github/shared-scripts .claude/settings.json
   .terraform.lock.hcl secrets/infrastructure.enc.yaml tests/policy/a.rego docs/summary.md docs/drift.md docs/out/a.md products/anima/upstream.env
-  platform/traefik/kustomization.yaml tools/tests/check.sh MODULE.bazel.lock .bazelrc
+  platform/traefik/kustomization.yaml tools/tests/check.sh MODULE.bazel.lock .bazelrc tools/site-check/fixtures/clean/_site/index.html tools/site-check/fixtures/a/b/_site/x.css
 )
 for p in "${tracked[@]}"; do
   if git -C "$tmp/repo" check-ignore -q --no-index "$p"; then fail "$p is ignored: the common .gitignore must not hide a tracked file"; fi

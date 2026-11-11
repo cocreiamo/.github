@@ -28,6 +28,8 @@ mutants/
 
 node_modules/
 _site/
+!tools/site-check/fixtures/**/_site/
+.lighthouseci/
 
 bazel-*
 user.bazelrc
