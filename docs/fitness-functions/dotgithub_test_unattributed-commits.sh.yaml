@@ -1,0 +1,7 @@
+id: dotgithub/test/unattributed-commits.sh
+repo: dotgithub
+invariant: 'shared-rules.yml fails a pull request that carries a commit GitHub maps to no user (and that is no bot) or whose author email is on a reserved test domain, naming each commit and how to fix it, because the ruleset blocks such a PR with every check green.'
+runs:
+- pr-ci
+command: bash tests/unattributed-commits.sh
+file: tests/unattributed-commits.sh

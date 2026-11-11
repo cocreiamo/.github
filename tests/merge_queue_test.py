@@ -73,7 +73,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         LOG.append(("POST", self.path, body))
-        self.reply(422 if self.path.endswith("/labels") and SC.get("label_exists") else 201, {})
+        self.reply(422 if self.path == "/repos/cocreiamo/x/labels" and SC.get("label_exists") else 201, {})
 
     def do_DELETE(self):
         LOG.append(("DELETE", self.path, None))
