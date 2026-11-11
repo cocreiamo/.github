@@ -19,10 +19,10 @@ common() { # <workflow> <job>...: the rules every reusable maintenance workflow 
   yq -e '(.concurrency.group | test("github.repository")) and .concurrency."cancel-in-progress" != true' "$wf" >/dev/null \
     || fail "$wf must declare its own concurrency group naming the repository, never cancelling a run in progress"
   for job in "$@"; do
-    yq -e ".jobs.\"$job\".\"runs-on\" == [\"self-hosted\", \"cocreiamo-ci\"]" "$wf" >/dev/null || fail "$wf job $job must run on [self-hosted, cocreiamo-ci]"
+    yq -e ".jobs.\"$job\".\"runs-on\" | join(\",\") == \"self-hosted,cocreiamo-ci\"" "$wf" >/dev/null || fail "$wf job $job must run on [self-hosted, cocreiamo-ci]"
     yq -e ".jobs.\"$job\".\"timeout-minutes\" > 0 and .jobs.\"$job\".\"timeout-minutes\" <= 10" "$wf" >/dev/null || fail "$wf job $job needs a short timeout-minutes"
     yq -e "[.jobs.\"$job\".steps[] | select(has(\"uses\")) | .uses | test(\"@[0-9a-f]{40}( |\$)\")] | all" "$wf" >/dev/null || fail "every action of $wf must be pinned by commit"
-    yq -e ".jobs.\"$job\".permissions | length > 0" "$wf" >/dev/null || fail "$wf job $job must list its permissions"
+    yq -e ".jobs.\"$job\" | has(\"permissions\")" "$wf" >/dev/null || fail "$wf job $job must declare its permissions"
   done
 }
 
@@ -47,7 +47,7 @@ printf '%s\n' "$(cat shared/scripts/mark_conflicts.py)" > "$tmp/mark_conflicts.p
 common auto-merge-rearm.yml arm
 wf=$dir/auto-merge-rearm.yml
 yq -e '.jobs.arm.permissions | length == 0' "$wf" >/dev/null || fail "auto-merge-rearm.yml's job holds no token permission: the App token acts"
-yq -e '.jobs.arm.if | test("!github.event.pull_request.draft") and test("head.repo.full_name == github.repository")' "$wf" >/dev/null \
+yq -e '(.jobs.arm.if | test("!github.event.pull_request.draft")) and (.jobs.arm.if | test("head.repo.full_name == github.repository"))' "$wf" >/dev/null \
   || fail "auto-merge-rearm.yml must skip drafts and PRs from forks"
 yq -e '[.jobs.arm.steps[] | select(has("uses")) | .uses | test("actions/checkout")] | any | not' "$wf" >/dev/null || fail "auto-merge-rearm.yml runs with secrets: it must check out no code of the PR"
 yq -e '[.jobs.arm.steps[] | select(has("run")) | .run | test("\bgh\b")] | any | not' "$wf" >/dev/null || fail "auto-merge-rearm.yml must not call gh: the runners have none and its token must be the App's"

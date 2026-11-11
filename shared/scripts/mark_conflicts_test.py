@@ -35,7 +35,9 @@ class Api:
                 if api.deny_all:
                     return self.reply(403, {"message": "denied"})
                 if "/pulls?state=open" in self.path:
-                    return self.reply(200, [{"number": n, "labels": [{"name": "conflict"}] if n in api.labelled else []} for n in api.states])
+                    return self.reply(
+                        200, [{"number": n, "labels": [{"name": "conflict"}] if n in api.labelled else []} for n in api.states]
+                    )
                 n = int(self.path.rsplit("/", 1)[1])
                 if n in api.unknown_once:
                     api.unknown_once.discard(n)

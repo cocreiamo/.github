@@ -1,4 +1,5 @@
 """Runs the script embedded in auto-merge-rearm.yml (argv[1]) against a loopback GraphQL stub."""
+
 import http.server
 import json
 import os
