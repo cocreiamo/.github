@@ -78,7 +78,7 @@ printf 'x\n' > "$tmp/repo/CLAUDE.md"
 while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
 git -C "$tmp/repo" init -q -b main
 git -C "$tmp/repo" add -A
-git -C "$tmp/repo" commit -qm init
+git -C "$tmp/repo" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm init
 git clone -q --no-checkout "$tmp/repo" "$tmp/sparse"
 git -C "$tmp/sparse" sparse-checkout set --no-cone CLAUDE.md .github/shared-scripts .github/shared-configs
 git -C "$tmp/sparse" checkout -q main
