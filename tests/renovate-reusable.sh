@@ -18,8 +18,8 @@ yq -e '.on.workflow_call.secrets."app-private-key".required == true and (.on.wor
 yq -e '[.jobs[] | select(has("steps")) | .steps[] | select(has("uses")) | .uses | test("@[0-9a-f]{40}( |$)")] | all' "$wf" >/dev/null || fail "every action of $wf must be pinned by commit"
 yq -e '.jobs.alert.uses | test("^cocreiamo/\.github/\.github/workflows/post-merge-alert\.yml@[0-9a-f]{40}$")' "$wf" >/dev/null \
   || fail "the alert job must call post-merge-alert.yml of cocreiamo/.github at a commit (a local ./ in a reusable workflow resolves to the caller)"
-yq -e '(.jobs.alert.needs | join(",")) == "renovate" and .jobs.alert.permissions.actions == "read" and (.jobs.alert.if | test("inputs.alert")) and (.jobs.alert.if | test("failure"))' "$wf" >/dev/null \
-  || fail "the alert job must follow renovate, need actions: read and run only for alert: true on a failure"
+yq -e '(.jobs.alert.needs | join(",")) == "renovate" and .jobs.alert.permissions.actions == "read" and .jobs.alert.permissions.issues == "write" and (.jobs.alert.if | test("inputs.alert")) and (.jobs.alert.if | test("failure"))' "$wf" >/dev/null \
+  || fail "the alert job must follow renovate, need actions: read and issues: write and run only for alert: true on a failure"
 yq -e '[.jobs.renovate.steps[] | select(has("uses") and (.uses | test("renovatebot/github-action"))) | .env | has("RENOVATE_ALLOWED_COMMANDS")] | any | not' "$wf" >/dev/null \
   || fail "the Renovate step must not set RENOVATE_ALLOWED_COMMANDS itself: the step that merges the callers' extra commands writes it"
 
@@ -59,7 +59,7 @@ done
 ! grep -qF '"x"' "$tmp/out" || fail "a refusal must not echo values (extra-env-secret may hold a secret)"
 
 yq -e '(.on | keys | join(",")) == "schedule,workflow_dispatch"' "$caller" >/dev/null || fail "$caller must run on a schedule and on demand"
-yq -e '.jobs.renovate.uses == "./.github/workflows/renovate.yml" and .jobs.renovate.permissions.contents == "read" and .jobs.renovate.permissions.actions == "read"
+yq -e '.jobs.renovate.uses == "./.github/workflows/renovate.yml" and .jobs.renovate.permissions.contents == "read" and .jobs.renovate.permissions.actions == "read" and .jobs.renovate.permissions.issues == "write"
   and (.jobs.renovate.secrets."app-private-key" | test("CLAUDE_CODE_PR_APP_PRIVATE_KEY"))' "$caller" >/dev/null \
   || fail "$caller must call ./.github/workflows/renovate.yml with contents and actions read and the App key"
 echo "renovate-reusable ok"

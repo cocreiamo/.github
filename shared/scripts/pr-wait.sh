@@ -17,6 +17,11 @@ else
   cmd=(gh pr checks "$@" --required --watch --fail-fast --interval "$interval")
 fi
 
+if [ "${cmd[1]}" = pr ]; then
+  gh pr view "$@" --json url,headRefName --jq '"pr:wait: waiting for \(.url) (head branch \(.headRefName))"' ||
+    echo "pr:wait: could not read the PR header: is this the right repository?" >&2
+fi
+
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 while :; do

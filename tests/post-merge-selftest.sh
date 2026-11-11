@@ -13,7 +13,7 @@ yq -e '.on.workflow_call.inputs.sha.type == "string" and (.on.workflow_call.inpu
   and .on.workflow_call.inputs.green.type == "boolean" and .on.workflow_call.inputs.green.default == true' "$wf" >/dev/null \
   || fail "$wf must declare the optional inputs sha (string) and green (boolean, default true)"
 yq -e '.on.workflow_call.secrets."app-private-key".required == true' "$wf" >/dev/null || fail "$wf must require the secret app-private-key"
-yq -e '.permissions == {}' "$wf" >/dev/null || fail "$wf must start from permissions: {}"
+yq -e '(.permissions | length) == 0' "$wf" >/dev/null || fail "$wf must start from permissions: {}"
 yq -e '.concurrency.group | test("github.repository")' "$wf" >/dev/null || fail "$wf must declare a concurrency group of its own that names the repository"
 yq -e '.concurrency."cancel-in-progress" != true' "$wf" >/dev/null || fail "a self-test in progress must not be cancelled"
 for job in dry-run dry-run-green dry-run-red; do
@@ -25,7 +25,7 @@ yq -e '(.jobs."dry-run".uses | test("post-merge-revert\\.yml")) and .jobs."dry-r
 yq -e '(.jobs."dry-run-green".uses | test("post-merge-green\.yml")) and .jobs."dry-run-green".with."dry-run" == true
   and (.jobs."dry-run-green".if | test("inputs.green"))' "$wf" >/dev/null || fail "dry-run-green must call post-merge-green.yml with dry-run on, only when green is true"
 yq -e '(.jobs."dry-run-red".uses | test("post-merge-alert\.yml")) and (.jobs."dry-run-red".needs | join(",")) == "dry-run,dry-run-green"
-  and (.jobs."dry-run-red".if | test("always\(\)") and test("failure"))
+  and (.jobs."dry-run-red".if | test("always\(\)")) and (.jobs."dry-run-red".if | test("failure"))
   and .jobs."dry-run-red".with."title-prefix" == "post-merge revert dry run red: " and .jobs."dry-run-red".with.label == "post-merge-dry-run-red"' "$wf" >/dev/null \
   || fail "dry-run-red must follow both dry runs, run always on a failure and open the labelled alert through post-merge-alert.yml"
 for job in dry-run dry-run-green dry-run-red; do
