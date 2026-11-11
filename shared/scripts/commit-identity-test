@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="commit-identity refuses an author or committer on a reserved test domain (example, *.example, example.*, invalid, *.invalid, test, *.test, localhost, *.localhost), whatever the case, and accepts a real address"
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+# commit-identity-test [path of commit-identity]: the default is the copy next to this script (a vendored copy sits wherever .github/shared-scripts puts it).
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=testlib.sh
+. "$here/testlib.sh"
+check=${1:-$here/commit-identity}
+[ -x "$check" ] || fail "no executable identity check at $check"
+git_env_clear
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+tmpdir
+real() { env GIT_AUTHOR_NAME=Real GIT_AUTHOR_EMAIL=person@cocreiamo.com GIT_COMMITTER_NAME=Real GIT_COMMITTER_EMAIL=person@cocreiamo.com "$@"; }
+for email in t@example.invalid t@example.com t@example.org t@EXAMPLE.COM ci@runner.test ci@RUNNER.TEST x@host.localhost x@localhost x@invalid x@test x@example x@a.b.example; do
+  if real env GIT_AUTHOR_EMAIL="$email" "$check" >"$tmp/out" 2>&1; then fail "an author $email was accepted"; fi
+  grep -q "$email" "$tmp/out" || fail "the refusal of the author $email does not name the address"
+  grep -q author "$tmp/out" || fail "the refusal of the author $email does not say it is the author"
+  if real env GIT_COMMITTER_EMAIL="$email" "$check" >"$tmp/out" 2>&1; then fail "a committer $email was accepted"; fi
+  grep -q committer "$tmp/out" || fail "the refusal of the committer $email does not say it is the committer"
+done
+for email in person@cocreiamo.com a@b.it me@notexample.com me@testing.dev me@mylocalhost.io me@invalidate.org; do
+  real env GIT_AUTHOR_EMAIL="$email" GIT_COMMITTER_EMAIL="$email" "$check" >/dev/null 2>&1 || fail "the real address $email was refused"
+done
+real "$check" >/dev/null 2>&1 || fail "a real identity was refused"
+echo "commit-identity ok"

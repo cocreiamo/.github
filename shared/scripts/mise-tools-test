@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="shared/scripts/mise-tools.toml: only [tools], every tool pinned to one exact version, the tools every repository shares are all there, mise loads it as a .config/mise/conf.d fragment and a repository's own mise.toml still overrides it, and a repository that pins a tool of the block pins the same version"
+# mise-tools-test [path of mise-tools.toml] [repository root]: the defaults are the copy next to this script and the working directory's mise.toml.
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+block=${1:-$here/mise-tools.toml}
+root=${2:-$PWD}
+[ -f "$block" ] || fail "no shared tools block at $block"
+command -v yq >/dev/null || fail "yq is not on PATH"
+command -v mise >/dev/null || fail "mise is not on PATH"
+tmpdir
+toml() { yq -p toml -o yaml "$@"; }
+requested() { # <tool>: the version mise requests for it in $tmp/p
+  (cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise ls --json "$1" 2>/dev/null) | yq -p json -o yaml '[.[] | select(has("requested_version"))] | .[0].requested_version'
+}
+
+[ "$(toml 'keys | join(",")' "$block")" = tools ] || fail "$block must have a [tools] table and nothing else"
+for tool in shellcheck shfmt "aqua:astral-sh/ruff" "pipx:yamllint" gitleaks "aqua:crate-ci/typos" "github:editorconfig-checker/editorconfig-checker" actionlint zizmor yq jq uv; do
+  [ "$(toml "has(\"tools\") and (.tools | has(\"$tool\"))" "$block")" = true ] || fail "$block does not pin $tool"
+done
+while IFS=$'\t' read -r tool version; do
+  [[ $version =~ ^[0-9]+(\.[0-9]+)*$ ]] || fail "$tool is pinned to '$version': an exact version is required, no range, latest or prefix"
+done < <(yq -p toml -o tsv '.tools | to_entries | .[] | [.key, (.value | (select(tag == "!!map") | .version) // .)] | @tsv' "$block")
+
+mkdir -p "$tmp/p/.config/mise/conf.d"
+cp "$block" "$tmp/p/.config/mise/conf.d/shared-tools.toml"
+printf '[tools]\njq = "1.0.0"\n' > "$tmp/p/mise.toml"
+mise trust -q "$tmp/p" >/dev/null 2>&1 || true
+(cd "$tmp/p" && MISE_TRUSTED_CONFIG_PATHS="$tmp/p" mise config ls --json) > "$tmp/config.json" 2>/dev/null || fail "mise cannot list the config of a project with the block as a conf.d fragment"
+yq -p json -o json '[.[] | select(.path | test("conf.d/shared-tools.toml$"))] | length' "$tmp/config.json" | grep -qx 1 || fail "mise does not load the block from .config/mise/conf.d"
+want=$(toml '.tools.shellcheck' "$block")
+got=$(requested shellcheck)
+[ "$got" = "$want" ] || fail "mise resolves shellcheck to '$got' in a project that includes the block, not $want"
+own=$(requested jq)
+[ "$own" = "1.0.0" ] || fail "a repository's own mise.toml must override the block, jq resolved to '$own'"
+
+# one version per tool across the repositories: what this root pins of the block's tools equals the block
+if [ -f "$root/mise.toml" ]; then
+  while IFS=$'\t' read -r tool version; do
+    mine=$(yq -p toml -o tsv ".tools | to_entries | .[] | select(.key == \"$tool\") | (.value | (select(tag == \"!!map\") | .version) // .)" "$root/mise.toml")
+    [ -z "$mine" ] || [ "$mine" = "$version" ] || fail "$root/mise.toml pins $tool $mine, the shared block pins $version: one version per tool"
+  done < <(yq -p toml -o tsv '.tools | to_entries | .[] | [.key, (.value | (select(tag == "!!map") | .version) // .)] | @tsv' "$block")
+fi
+echo "mise-tools ok"

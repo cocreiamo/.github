@@ -1,0 +1,7 @@
+id: dotgithub/test/mise-tools.sh
+repo: dotgithub
+invariant: 'The shared mise tools block pins every shared tool to one exact version, mise loads it as a .config/mise/conf.d fragment that a repository mise.toml overrides, and a repository pins the same version as the block.'
+runs:
+- pr-ci
+command: bash tests/mise-tools.sh
+file: tests/mise-tools.sh
