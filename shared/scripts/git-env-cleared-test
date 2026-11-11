@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="git-env-cleared refuses a script that creates a git repository (init, worktree add, with or without -C/-c options) without clearing git rev-parse --local-env-vars, skips vendored copies, comments and unscanned directories, and accepts the clearing in each repository's form"
 # git-env-cleared-test [path of git-env-cleared]: the default is the copy next to this script (a vendored copy sits wherever .github/shared-scripts puts it).
-# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+# shellcheck disable=SC1091,SC2154,SC2016 # the library is a sibling file; $tmp comes from it; the fixtures are single-quoted on purpose
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/testlib.sh"
