@@ -12,6 +12,14 @@
   "minimumReleaseAge": "3 days",
   "prHourlyLimit": 0,
   "prConcurrentLimit": 10,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "minimumReleaseAge": "0 days",
+    "prCreation": "immediate",
+    "labels": ["security"]
+  },
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
   "packageRules": [

@@ -77,7 +77,7 @@ jobs:
           SCRIPT: |
             import json, os, re, secrets, sys
             RESERVED = {"RENOVATE_TOKEN", "RENOVATE_REPOSITORIES", "RENOVATE_ONBOARDING", "RENOVATE_REQUIRE_CONFIG",
-                        "RENOVATE_EXPOSE_ALL_ENV", "RENOVATE_ALLOWED_COMMANDS"}
+                        "RENOVATE_EXPOSE_ALL_ENV", "RENOVATE_ALLOWED_COMMANDS", "RENOVATE_LOG_FILE", "RENOVATE_LOG_FILE_LEVEL"}
             out = []
             for name in ("EXTRA_ENV", "EXTRA_ENV_SECRET"):
                 raw = os.environ.get(name, "").strip()
@@ -120,7 +120,8 @@ jobs:
                     delimiter = "EOF_" + secrets.token_hex(16)
                     env.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
         run: python3 -I -c "$SCRIPT"
-      - uses: renovatebot/github-action@266fef21329c44765ad42f9dea1f01f5d2d91084 # v46.3.13
+      - id: renovate
+        uses: renovatebot/github-action@266fef21329c44765ad42f9dea1f01f5d2d91084 # v46.3.13
         with:
           token: ${{ steps.token.outputs.token }}
           renovate-version: 44.219.0@sha256:7ae452492cd2393dbb8d401c6a3e7569bb7e6b5a7d2783739a6e4af576fd248a
@@ -135,6 +136,79 @@ jobs:
           # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; RENOVATE_ALLOWED_COMMANDS (the step
           # above) lets nothing else run but the extra commands of the caller.
           RENOVATE_EXPOSE_ALL_ENV: "true"
+          RENOVATE_LOG_FILE: /tmp/renovate-1.log
+          RENOVATE_LOG_FILE_LEVEL: info
+      - name: classify
+        id: classify
+        env:
+          RENOVATE_LOGS: ${{ runner.temp }}/renovate-1.log
+          SCRIPT: |
+            import json, os
+            status = "fail"
+            last = None
+            for path in os.environ["RENOVATE_LOGS"].split():
+                last = None
+                try:
+                    with open(path) as log:
+                        for line in log:
+                            try:
+                                record = json.loads(line)
+                            except ValueError:
+                                continue
+                            if isinstance(record, dict) and record.get("msg") == "Repository finished":
+                                last = record
+                except OSError:
+                    pass
+            if last is not None:
+                if last.get("exitCode", 0) == 0:
+                    status = "ok"
+                elif last.get("result") == "repository-changed":
+                    status = "retry"
+            with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                out.write(f"status={status}\n")
+        run: python3 -I -c "$SCRIPT"
+      - name: renovate retry
+        if: ${{ steps.classify.outputs.status == 'retry' }}
+        uses: renovatebot/github-action@266fef21329c44765ad42f9dea1f01f5d2d91084 # v46.3.13
+        with:
+          token: ${{ steps.token.outputs.token }}
+          renovate-version: 44.219.0@sha256:7ae452492cd2393dbb8d401c6a3e7569bb7e6b5a7d2783739a6e4af576fd248a
+          docker-user: root
+          docker-volumes: ${{ runner.temp }}:/tmp
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: required
+          # The shared preset's postUpgradeTask fetches a script of cocreiamo/.github with RENOVATE_TOKEN; RENOVATE_ALLOWED_COMMANDS (the step
+          # above) lets nothing else run but the extra commands of the caller.
+          RENOVATE_EXPOSE_ALL_ENV: "true"
+          RENOVATE_LOG_FILE: /tmp/renovate-2.log
+          RENOVATE_LOG_FILE_LEVEL: info
+      - name: renovate result
+        if: ${{ always() && steps.renovate.conclusion == 'success' }}
+        env:
+          RENOVATE_LOGS: ${{ runner.temp }}/renovate-1.log ${{ runner.temp }}/renovate-2.log
+          SCRIPT: |
+            import json, os, sys
+            last = None
+            for path in os.environ["RENOVATE_LOGS"].split():
+                if not os.path.exists(path):
+                    continue
+                last = None
+                with open(path) as log:
+                    for line in log:
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(record, dict) and record.get("msg") == "Repository finished":
+                            last = record
+            if last is None:
+                sys.exit("::error::Renovate wrote no «Repository finished» line: the run did not finish")
+            if last.get("exitCode", 0) != 0:
+                sys.exit(f"::error::Renovate ended with result {last.get('result')} (exit code {last.get('exitCode')}); dependency updates were skipped")
+            print("Renovate finished:", last.get("result"))
+        run: python3 -I -c "$SCRIPT"
   alert:
     needs: [renovate]
     if: ${{ always() && inputs.alert && needs.renovate.result == 'failure' }}
