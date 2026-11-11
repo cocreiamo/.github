@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # merge-queue.yml: with the ruleset requiring up-to-date branches, the oldest PR that has auto-merge on and green required checks
-# but is behind main is brought up to date, one at a time; a PR in flight, a red, draft, conflicting or auto-merge-less PR never is.
+# but is behind main is brought up to date, one at a time; a PR in flight, a red, draft, conflicting or auto-merge-less PR never is, and a PR blocked with
+# green checks is labelled, commented once and skipped instead of holding the queue.
 set -euo pipefail
 # shellcheck source=../shared/scripts/testlib.sh
 . "$(dirname "$0")/../shared/scripts/testlib.sh"

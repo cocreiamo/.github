@@ -1,4 +1,4 @@
-import http.server, json, os, subprocess, sys, threading
+import datetime, http.server, json, os, subprocess, sys, threading
 
 LOG = []
 SC = {}
@@ -14,12 +14,22 @@ def sha(n):
     return str(n).rjust(40, "0")
 
 
-def pull(n, state="behind", auto=True, draft=False, runs="green"):
+def pull(n, state="behind", auto=True, draft=False, runs="green", labels=(), commits=(), fresh=False):
     return {"number": n, "head": {"sha": sha(n)}, "auto_merge": {"merge_method": "squash"} if auto else None, "draft": draft,
-            "created_at": "2026-11-10T10:%02d:00Z" % n, "state": state, "runs": runs}
+            "created_at": "2026-11-10T10:%02d:00Z" % n, "state": state, "runs": runs, "labels": [{"name": l} for l in labels],
+            "commits": list(commits), "fresh": fresh}
 
 
-def check_runs(runs):
+def check_runs(runs, fresh=False):
+    out = check_runs_base(runs)
+    when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=5 if fresh else 3600)
+    for r in out:
+        if r["status"] == "completed":
+            r["completed_at"] = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return out
+
+
+def check_runs_base(runs):
     if runs == "pending":
         return [{"name": c, "id": i, "conclusion": "success" if i else None, "status": "completed" if i else "in_progress"} for i, c in enumerate(CTX)]
     if runs == "failed":
@@ -44,7 +54,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         LOG.append(("GET", self.path, None))
         p = self.path
         if p.startswith("/repos/cocreiamo/x/pulls?"):
-            return self.reply(200, [{k: v for k, v in x.items() if k not in ("state", "runs")} for x in SC["pulls"]])
+            return self.reply(200, [{k: v for k, v in x.items() if k not in ("state", "runs", "commits", "fresh")} for x in SC["pulls"]])
+        if p.startswith("/repos/cocreiamo/x/pulls/") and "/commits" in p:
+            n = int(p.split("/pulls/")[1].split("/")[0])
+            return self.reply(200, next(x for x in SC["pulls"] if x["number"] == n)["commits"])
         if p.startswith("/repos/cocreiamo/x/pulls/"):
             n = int(p.rsplit("/", 1)[1])
             x = next(x for x in SC["pulls"] if x["number"] == n)
@@ -54,8 +67,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if "/check-runs" in p:
             s = p.split("/commits/")[1].split("/")[0]
             x = next(x for x in SC["pulls"] if x["head"]["sha"] == s)
-            return self.reply(200, {"check_runs": check_runs(x["runs"])})
+            return self.reply(200, {"check_runs": check_runs(x["runs"], x["fresh"])})
         self.reply(404, {})
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        LOG.append(("POST", self.path, body))
+        self.reply(422 if self.path == "/repos/cocreiamo/x/labels" and SC.get("label_exists") else 201, {})
+
+    def do_DELETE(self):
+        LOG.append(("DELETE", self.path, None))
+        self.reply(200, [])
 
     def do_PUT(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -80,7 +102,11 @@ def run(pulls, dry=False, **kw):
 
 
 def updated(calls):
-    return [c[1].split("/pulls/")[1].split("/")[0] for c in calls]
+    return [c[1].split("/pulls/")[1].split("/")[0] for c in calls if c[0] == "PUT"]
+
+
+def commented(calls):
+    return [c[1].split("/issues/")[1].split("/")[0] for c in calls if c[0] == "POST" and c[1].endswith("/comments")]
 
 
 r, calls = run([pull(5)])
@@ -94,8 +120,41 @@ check("only the oldest ready PR is updated", updated(calls), ["5"])
 r, calls = run([pull(5, state="clean", runs="pending"), pull(6)])
 check("a PR already up to date and running waits: nobody else is updated", calls, [])
 
+r, calls = run([pull(5, state="blocked", runs="green", fresh=True), pull(6)])
+check("a PR up to date whose checks have just turned green is about to merge: nobody else is updated", calls, [])
+
+BAD = [{"sha": "a" * 40, "author": None, "commit": {"author": {"name": "T", "email": "t@example.invalid"}}},
+       {"sha": "b" * 40, "author": {"login": "me"}, "commit": {"author": {"name": "Me", "email": "me@cocreiamo.com"}}},
+       {"sha": "c" * 40, "author": None, "commit": {"author": {"name": "renovate[bot]", "email": "r@users.noreply.github.com"}}}]
+r, calls = run([pull(5, state="blocked", runs="green", commits=BAD), pull(6)])
+check("a PR blocked with every required check green does not hold the queue", updated(calls), ["6"])
+check("it is labelled queue-blocked", [c[2] for c in calls if c[0] == "POST" and c[1].endswith("/issues/5/labels")], [{"labels": ["queue-blocked"]}])
+check("it is commented once", commented(calls), ["5"])
+body = next(c[2]["body"] for c in calls if c[0] == "POST" and c[1].endswith("/issues/5/comments"))
+for want in ("a" * 10, "t@example.invalid", "squashed", "no force push"):
+    if want not in body:
+        sys.exit("FAIL: the comment does not say %r: %s" % (want, body))
+for unwanted in ("b" * 10, "c" * 10):
+    if unwanted in body:
+        sys.exit("FAIL: the comment names an attributed or bot commit: " + body)
+
+r, calls = run([pull(5, state="blocked", runs="green", commits=BAD, labels=["queue-blocked"]), pull(6)])
+check("an already labelled PR is not commented again", [c for c in calls if c[0] == "POST"], [])
+check("and still does not hold the queue", updated(calls), ["6"])
+
 r, calls = run([pull(5, state="blocked", runs="green"), pull(6)])
-check("a PR up to date and green is about to merge: nobody else is updated", calls, [])
+check("a PR blocked for a reason the API does not name is skipped too", updated(calls), ["6"])
+if "merge box" not in next(c[2]["body"] for c in calls if c[0] == "POST" and c[1].endswith("/comments")):
+    sys.exit("FAIL: an unnamed reason is not pointed at the merge box")
+
+r, calls = run([pull(5, state="blocked", runs="green", commits=BAD), pull(6)], label_exists=True)
+check("a label that already exists in the repository is not an error", (r.returncode, updated(calls)), (0, ["6"]))
+
+r, calls = run([pull(5, runs="green", labels=["queue-blocked"])])
+check("a PR that is no longer blocked loses the label and is updated", ([c[0] for c in calls if c[0] == "DELETE"], updated(calls)), (["DELETE"], ["5"]))
+
+r, calls = run([pull(5, state="blocked", runs="green", commits=BAD)], dry=True)
+check("a dry run labels and comments nothing", calls, [])
 
 r, calls = run([pull(5, state="blocked", runs="failed"), pull(6)])
 check("an up-to-date red PR does not hold the queue", updated(calls), ["6"])
