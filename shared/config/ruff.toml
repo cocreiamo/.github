@@ -1,0 +1,47 @@
+line-length = 140
+include = ["*.py", "lib/deadlines"]
+extend-exclude = [
+    "ansible/collections",
+    ".terraform",
+    "platform/*/charts",
+    "tests/*/bad",
+    "tests/*/good",
+    "mise-tasks/wt/gc",
+    "mise-tasks/wt/list",
+    "mise-tasks/test/test-first",
+    "mise-tasks/test/docker-mounts",
+    ".claude/otel-headers.sh",
+    "mise-tasks/lib/claude_telemetry_check.py",
+    "mise-tasks/test/shared-rules",
+    "mise-tasks/test/worktrees",
+    "mise-tasks/lib/eol_check.py",
+    "mise-tasks/lib/post_merge_skip.py",
+    "mise-tasks/pr/wait",
+    "mise-tasks/test/pr-wait",
+    "mise-tasks/test/gh-watch-interval",
+    "mise-tasks/lib/workflow-pins-check.py",
+    "mise-tasks/lib/workflow-pins-test.sh",
+    "mise-tasks/lib/heavy-lock",
+    "mise-tasks/test/heavy-lock",
+]
+
+[lint]
+select = ["E", "F", "I", "W", "B", "UP", "PLW", "RUF", "S"]
+ignore = ["S603", "S607"]
+
+[lint.per-file-ignores]
+"**/*_test.py" = ["S101", "S105", "S108"]
+"tests/**/test_*.py" = ["S101", "S105", "S108"]
+"mise-tasks/test/*" = ["S101", "S102", "S105", "S108", "S310", "E402"]
+"platform/*/*.py" = ["S310"]
+"mise-tasks/*" = ["S310"]
+"mise-tasks/lib/*" = ["S310"]
+"platform/ci-tracker/tracker.py" = ["S104"]
+"platform/external-usage/exporter.py" = ["S104"]
+"platform/rule-metrics-exist/exporter.py" = ["S104"]
+"platform/reloader/drift.py" = ["S104"]
+"lib/fitness_entries.py" = ["PLW1510"]
+"lib/workflow-pins-check.py" = ["E501"]
+
+[format]
+exclude = ["lib/fitness_entries.py", "lib/workflow-pins-check.py"]

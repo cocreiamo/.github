@@ -1,0 +1,11 @@
+extends: substitution
+message: "Use '%s' instead of '%s'"
+level: error
+ignorecase: true
+swap:
+  whitelist: allowlist
+  whitelisted: allowlisted
+  blacklist: denylist
+  blacklisted: denylisted
+  master branch: main branch
+  master/slave: primary/replica

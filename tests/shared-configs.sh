@@ -4,7 +4,6 @@
 set -euo pipefail
 # shellcheck source=../shared/scripts/testlib.sh
 . "$(dirname "$0")/../shared/scripts/testlib.sh"
-# shellcheck source=../shared/scripts/testlib.sh
 cd "$(dirname "$0")/.."
 wf=.github/workflows/shared-rules.yml
 configs=shared/config

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Brings a repository in line with the pinned shared-rules.yml (SHARED_RULES_FILE, or fetched at the commit given as $1
 # with RENOVATE_TOKEN: a caller's token cannot read this repository's files, but it can read the workflow): rewrites the
-# section «## Working with the founder» of ./CLAUDE.md to the canonical text, and overwrites each script that
-# ./.github/shared-scripts declares with the canonical copy from the embedded bundle. Run by Renovate as a postUpgradeTask
+# section «## Working with the founder» of ./CLAUDE.md to the canonical text, and overwrites each script and config that
+# ./.github/shared-scripts and ./.github/shared-configs declare with the canonical copy from the embedded bundles. Run by Renovate as a postUpgradeTask
 # when a repository bumps its pin of shared-rules.yml, so the bump PR is complete. The name is the one in every caller's
 # allowedCommands.
 set -euo pipefail
@@ -32,15 +32,22 @@ awk -v h="$heading" -v canonical="$canonical" '
 cat "$tmp" > CLAUDE.md
 rm -f "$tmp"
 
-manifest=.github/shared-scripts
-[ -f "$manifest" ] || exit 0
 canon=$(mktemp -d); trap 'rm -rf "$canon"' EXIT
-block SCRIPTS_BUNDLE | base64 -d | tar -xzf - -C "$canon"
-while read -r name path _; do
-  case ${name:-} in ''|'#'*) continue ;; esac
-  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] && [ -f "$canon/$name" ] && [ -n "${path:-}" ] || { echo "$manifest: bad line: $name ${path:-}" >&2; exit 1; }
-  case $path in /*|..|../*|*/..|*/../*) echo "$manifest: $path leaves the repository" >&2; exit 1 ;; esac
-  mkdir -p "$(dirname "$path")"
-  cat "$canon/$name" > "$path"
-  if [ -x "$canon/$name" ]; then chmod 755 "$path"; else chmod 644 "$path"; fi
-done < "$manifest"
+# vendor <manifest> <bundle key> <name regex>: overwrites each file the manifest declares with the canonical copy from the bundle
+vendor() {
+  local manifest=$1 key=$2 re=$3 name path _
+  [ -f "$manifest" ] || return 0
+  mkdir -p "$canon/$key"
+  block "$key" | base64 -d | tar -xzf - -C "$canon/$key"
+  while read -r name path _; do
+    case ${name:-} in ''|'#'*) continue ;; esac
+    [[ $name =~ $re ]] && [ -f "$canon/$key/$name" ] && [ -n "${path:-}" ] || { echo "$manifest: bad line: $name ${path:-}" >&2; exit 1; }
+    case $name in /*|..|../*|*/..|*/../*) echo "$manifest: $name leaves the bundle" >&2; exit 1 ;; esac
+    case $path in /*|..|../*|*/..|*/../*) echo "$manifest: $path leaves the repository" >&2; exit 1 ;; esac
+    mkdir -p "$(dirname "$path")"
+    cat "$canon/$key/$name" > "$path"
+    if [ -x "$canon/$key/$name" ]; then chmod 755 "$path"; else chmod 644 "$path"; fi
+  done < "$manifest"
+}
+vendor .github/shared-scripts SCRIPTS_BUNDLE '^[A-Za-z0-9._-]+$'
+vendor .github/shared-configs CONFIGS_BUNDLE '^[A-Za-z0-9._/-]+$'

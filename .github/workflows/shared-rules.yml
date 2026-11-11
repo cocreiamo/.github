@@ -1,7 +1,8 @@
 # Reusable: the repository's CLAUDE.md carries, byte for byte, the canonical shared section (shared/working-with-the-founder.md,
 # embedded below because a caller's token cannot read this private repository's files; tests/shared-rules.sh keeps the two equal),
-# and every script its .github/shared-scripts declares is a copy of the canonical one in shared/scripts (embedded the same way
-# by tools/embed-scripts.sh; tests/shared-scripts.sh keeps the bundle equal to the directory).
+# and every script its .github/shared-scripts declares is a copy of the canonical one in shared/scripts, and every config its
+# .github/shared-configs declares (the common .gitignore, the linter configs) a copy of the canonical one in shared/config (both embedded the
+# same way by tools/embed-scripts.sh; tests/shared-scripts.sh and tests/shared-configs.sh keep the bundles equal to the directories).
 # Callers pin the commit, so the text a repository is held to changes only when it bumps the pin:
 #   on: {pull_request: {types: [opened, synchronize, reopened]}}
 #   jobs: {rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/shared-rules.yml@<sha>}}
@@ -23,6 +24,7 @@ jobs:
           sparse-checkout: |
             CLAUDE.md
             .github/shared-scripts
+            .github/shared-configs
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: CLAUDE.md carries the canonical section
@@ -64,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [ -f .github/shared-scripts ] || exit 0
+          [ -f .github/shared-scripts ] || [ -f .github/shared-configs ] || exit 0
           git sparse-checkout list >/dev/null 2>&1 || exit 0
           # the checkout leaves no credentials behind and a sparse checkout is a partial clone: the blobs come from the remote
           if [ -n "${GH_TOKEN:-}" ]; then
@@ -72,8 +74,10 @@ jobs:
             echo "::add-mask::$auth"
             export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           fi
-          awk '$1 !~ /^#/ && NF >= 2 && $2 !~ /(^|\/)\.\.(\/|$)/ && $2 !~ /^\// { print "/" $2 }' .github/shared-scripts \
-            | git sparse-checkout add --stdin
+          for manifest in .github/shared-scripts .github/shared-configs; do
+            [ -f "$manifest" ] || continue
+            awk '$1 !~ /^#/ && NF >= 2 && $2 !~ /(^|\/)\.\.(\/|$)/ && $2 !~ /^\// { print "/" $2 }' "$manifest"
+          done | git sparse-checkout add --stdin
       - name: vendored scripts equal the canonical ones
         env:
           SCRIPTS_BUNDLE: |-
@@ -1023,4 +1027,79 @@ jobs:
           done < "$manifest"
           [ "$count" -gt 0 ] || { echo "::error file=$manifest::declares no script"; status=1; }
           [ "$status" -eq 0 ] && echo "ok: $count vendored scripts are the canonical ones"
+          exit "$status"
+      - name: vendored configs equal the canonical ones
+        env:
+          CONFIGS_BUNDLE: |-
+            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
+            pSlNaUpTmtKUI+XfLcjx/ABQAAA=
+        run: |
+          set -euo pipefail
+          manifest=.github/shared-configs
+          [ -f "$manifest" ] || { echo "ok: no $manifest, this repository vendors no shared config"; exit 0; }
+          canon=$(mktemp -d); trap 'rm -rf "$canon"' EXIT
+          base64 -d <<<"$CONFIGS_BUNDLE" | tar -xzf - -C "$canon"
+          status=0 count=0
+          while read -r name path extra; do
+            case ${name:-} in ''|'#'*) continue ;; esac
+            if [ -z "${path:-}" ] || [ -n "${extra:-}" ] || ! [[ $name =~ ^[A-Za-z0-9._/-]+$ ]]; then
+              echo "::error file=$manifest::malformed line (want 'canonical-name local-path'): $name ${path:-} ${extra:-}"; status=1; continue
+            fi
+            case $name in /*|..|../*|*/..|*/../*) echo "::error file=$manifest::$name leaves shared/config"; status=1; continue ;; esac
+            case $path in /*|..|../*|*/..|*/../*) echo "::error file=$manifest::$path leaves the repository"; status=1; continue ;; esac
+            count=$((count + 1))
+            if [ ! -f "$canon/$name" ]; then echo "::error file=$manifest::$name is not a canonical config of cocreiamo/.github at the pinned commit"; status=1; continue; fi
+            if [ ! -f "$path" ] || [ -L "$path" ]; then echo "::error file=$manifest::$path is missing (or a link): it must be a copy of the canonical $name"; status=1; continue; fi
+            if ! diff -u --label "canonical $name" --label "$path" "$canon/$name" "$path"; then
+              echo "::error file=$path::differs from the canonical $name of cocreiamo/.github at the pinned commit (- canonical, + here): change it there and bump the pin, or restore the text"; status=1
+            fi
+          done < "$manifest"
+          [ "$count" -gt 0 ] || { echo "::error file=$manifest::declares no config"; status=1; }
+          [ "$status" -eq 0 ] && echo "ok: $count vendored configs are the canonical ones"
           exit "$status"

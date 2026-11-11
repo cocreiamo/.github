@@ -1,0 +1,9 @@
+extends: existence
+message: "Italian text in a document: the repository is English only (%s)"
+level: error
+ignorecase: true
+scope: text
+nonword: true
+tokens:
+  - '[àèéìòù]'
+  - '\b(della|delle|degli|dello|nella|nelle|questo|questa|perché|anche|quando|dopo|senza|tutti|tutte|nostro|nostra|sono|viene|vengono|deve|devono|fatto|ogni|oppure|quindi|mentre|invece)\b'
