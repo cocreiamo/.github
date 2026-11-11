@@ -9,6 +9,7 @@ wf=.github/workflows/shared-rules.yml
 scripts=shared/scripts
 step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
 tmpdir
+git_env_clear
 
 bundle=$(step "vendored scripts equal the canonical ones" .env.SCRIPTS_BUNDLE)
 [ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored scripts equal the canonical ones' with SCRIPTS_BUNDLE"

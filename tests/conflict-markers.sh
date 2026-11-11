@@ -7,7 +7,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 check="$repo/hooks/check-conflict-markers"
 tmpdir
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+git_env_clear
 
 git init -q -b main "$tmp/r"
 cd "$tmp/r"

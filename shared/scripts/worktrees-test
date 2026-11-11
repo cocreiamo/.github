@@ -2,6 +2,7 @@
 #MISE description="wt:gc and wt:list against a throwaway repository and a fake gh: a merged, clean, unused worktree is removed; one a process uses (working directory or open file), a dirty one, one with commits after the merge, an open one are kept and said why; a closed-unmerged or no-PR one is archived then removed once it is older than the threshold, kept and reported while younger, kept when the archive fails"
 # shellcheck disable=SC2016 # the bash -c bodies are single-quoted on purpose: they expand in the child
 set -euo pipefail
+while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'kill "${holder_cwd:-}" "${holder_file:-}" "${holder_old:-}" 2>/dev/null || true; chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
