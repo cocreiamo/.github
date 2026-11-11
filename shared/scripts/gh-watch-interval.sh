@@ -34,7 +34,7 @@ shared_paths() { # the vendored copies of the shared scripts, which carry the ba
   [ -f .github/shared-scripts ] || return 0
   awk '$1 == "gh-watch-interval.sh" || $1 == "pr-wait-test" || $1 == "pr-wait.sh" || $1 == "claude-pre-bash" || $1 == "claude-pre-bash-test" { print $2 }' .github/shared-scripts
 }
-mapfile -t files < <(git ls-files --cached --others --exclude-standard |
+mapfile -t files < <(git -c core.quotePath=false ls-files --cached --others --exclude-standard |
   grep -vxFf <(printf '%s\n' shared/scripts/gh-watch-interval.sh shared/scripts/pr-wait-test shared/scripts/pr-wait.sh shared/scripts/claude-pre-bash shared/scripts/claude-pre-bash-test; shared_paths) |
   while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done)
 found="$(offenders "${files[@]}")"

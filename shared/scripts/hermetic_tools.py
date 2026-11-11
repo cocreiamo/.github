@@ -16,7 +16,7 @@ BUILTINS = set(
     subprocess.run(["bash", "-c", "compgen -b"], capture_output=True, text=True, check=True).stdout.split()
 )
 # mise tool name (last segment of its key) to the binaries it installs, when they differ.
-BINARIES = {"cli": ["gh"], "node": ["node", "npm", "npx", "corepack"]}
+BINARIES = {"cli": ["gh"], "sh": ["shfmt"], "node": ["node", "npm", "npx", "corepack"]}
 
 # What every runner image has, verified on cocreiamo-ci, cocreiamo-ci-light and cocreiamo-ci-large with .github/workflows/runner-tools.yml (monorepo): bash, GNU
 # coreutils, findutils, grep, sed, gawk, tar, procps, git, docker, python3 (the other tools/tests use it), mise itself, and the two
@@ -130,7 +130,10 @@ def commands(text):
                 if text.startswith("$(", j):
                     depth, k = 1, j + 2
                     while k < n and depth:
-                        depth += {"(": 1, ")": -1}.get(text[k], 0)
+                        if text[k] == "'":
+                            k = text.find("'", k + 1)
+                            k = n if k < 0 else k
+                        depth += {"(": 1, ")": -1}.get(text[k] if k < n else "", 0)
                         k += 1
                     out.extend(commands(text[j + 2 : k - 1]))
                     j = k
@@ -237,7 +240,7 @@ def external_text(text, functions):
 
 
 def function_names_text(text):
-    return set(re.findall(r"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\)", text, re.M))
+    return set(re.findall(r"(?:^|;|\bthen\b|\belse\b|\bdo\b)\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\)", text, re.M))
 
 
 def function_names(paths):
