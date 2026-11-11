@@ -21,6 +21,10 @@ check() {
     for job in $(yq -N '.jobs | to_entries | .[] | select(.value.uses == null) | .key' "$f"); do
       runs=$(yq -N -o=json -I=0 ".jobs.\"$job\".\"runs-on\"" "$f")
       key="$file:$job"
+      # The guarded form is the hosted label in a public repository and this pool in a private one.
+      if [[ $runs == *'github.repository_visibility'* ]]; then
+        runs=$(grep -o '\[[^]]*\]' <<< "$runs" | tr -d '\\ ')
+      fi
       case $runs in
         *cocreiamo-ci-light*) seen[$key]=1 ;;
         '["self-hosted","cocreiamo-ci"]') continue ;;

@@ -59,7 +59,9 @@ def violations(directory):
         for job_id, job in (docs[name].get("jobs") or {}).items():
             if "runs-on" in job and not allowed(job["runs-on"]):
                 via = "" if name == root else f" (reached from {root})"
-                out.append(f"{name}: job {job_id}{via} runs on {job['runs-on']!r}, reachable from a trigger of a possibly public repository")
+                out.append(
+                    f"{name}: job {job_id}{via} runs on {job['runs-on']!r}, reachable from a trigger of a possibly public repository"
+                )
     return out
 
 

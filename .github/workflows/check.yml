@@ -16,13 +16,18 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
   lint:
-    runs-on: [self-hosted, cocreiamo-ci]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: ci-mise-setup
+        if: github.repository_visibility != 'public'
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        if: github.repository_visibility == 'public'
+        with:
+          cache: false
       - run: actionlint -shellcheck="$(mise which shellcheck)"
       - run: zizmor --offline --min-severity low .github/workflows
       - run: shared/scripts/workflow-pins-check.py
@@ -36,6 +41,7 @@ jobs:
       - run: bash tests/conflict-markers.sh
       - run: bash tests/pr-title.sh
       - run: bash tests/light-jobs.sh
+      - run: bash tests/public-runners.sh
       - run: bash tests/ci-aggregator.sh
       - run: bash tests/merge-queue.sh
       - run: bash tests/post-merge-revert.sh
@@ -79,7 +85,7 @@ jobs:
   ci:
     needs: [title, lint]
     if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: [self-hosted, cocreiamo-ci-light]
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci-light"]') }}
     timeout-minutes: 5
     permissions: {}
     steps:
