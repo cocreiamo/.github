@@ -42,6 +42,7 @@ jobs:
       - run: bash tests/pr-title.sh
       - run: bash tests/light-jobs.sh
       - run: bash tests/public-runners.sh
+      - run: bash tests/commons-release.sh
       - run: bash tests/ci-aggregator.sh
       - run: bash tests/merge-queue.sh
       - run: bash tests/post-merge-revert.sh
