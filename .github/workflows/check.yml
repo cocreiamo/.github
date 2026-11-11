@@ -59,6 +59,7 @@ jobs:
       - run: bash tests/git-env-cleared.sh
       - run: shared/scripts/lint-baseline secrets
       - run: bash tests/lint-baseline.sh
+      - run: bash tests/mise-tools.sh
       - run: bash tests/stalled-prs.sh
       - run: bash tests/pr-wait.sh
       - run: bash tests/heavy-lock.sh

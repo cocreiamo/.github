@@ -61,6 +61,11 @@ class Discovery(unittest.TestCase):
         self.assertIn(("ansible-core", "2.21.5"), pins)
         self.assertTrue(any("shellcheck" in u for u in untracked))
 
+    def test_the_tools_of_the_shared_conf_d_file_are_pins_too(self):
+        pins, _ = self.found({".config/mise/conf.d/shared-tools.toml": '[tools]\nnode = "24.15.0"\n', "mise.toml": '[tools]\nkubectl = "1.36.5"\n'})
+        self.assertIn(("nodejs", "24.15.0"), pins)
+        self.assertIn(("kubernetes", "1.36.5"), pins)
+
     def test_ansible_vars_and_hetzner_image(self):
         pins, _ = self.found(
             {
