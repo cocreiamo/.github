@@ -1,0 +1,7 @@
+id: dotgithub/test/post-merge-selftest.sh
+repo: dotgithub
+invariant: The monthly dry run of the post-merge revert and green decisions is one reusable workflow for every repository; it writes nothing, runs on pinned callees and raises an alert when either decision is red.
+runs:
+- pr-ci
+command: bash tests/post-merge-selftest.sh
+file: tests/post-merge-selftest.sh

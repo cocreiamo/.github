@@ -13,8 +13,15 @@ cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 echo "gh $*" >> "$FAKE_LOG"
 if [ "$1 $2" = "api rate_limit" ]; then echo "$(( $(date +%s) + RESET_IN ))"; exit 0; fi
+if [ "$1 $2" = "pr view" ] && [[ "$*" == *headRefName* ]]; then
+  [ -z "${HEAD_FAIL:-}" ] || { echo "no pull requests found for branch" >&2; exit 1; }
+  jq_expr=""
+  while [ $# -gt 0 ]; do [ "$1" != --jq ] || jq_expr="$2"; shift; done
+  echo '{"url":"https://github.com/cocreiamo/x/pull/7","headRefName":"feat/x"}' | jq -r "$jq_expr"
+  exit 0
+fi
 if [ "$1 $2" = "pr view" ]; then
-  views="$(grep -c '^gh pr view' "$FAKE_LOG")"
+  views="$(grep -c '^gh pr view.*--json state' "$FAKE_LOG")"
   if [ "$views" -le "${OPEN_VIEWS:-0}" ]; then echo OPEN; else echo "${FINAL_STATE:-MERGED}"; fi
   exit 0
 fi
@@ -47,11 +54,22 @@ name=ok; run ok -- 7
 [ "$rc" = 0 ] || fail "a green PR must exit 0, got $rc"
 grep -qF 'gh pr checks 7 --required --watch --fail-fast --interval 60' <<< "$log" || fail "the watch must be required, fail-fast and 60 s"
 
+name=guard; run guard -- 7
+grep -qF 'https://github.com/cocreiamo/x/pull/7' "$tmp/guard.out" || fail "the repository and the PR must be printed before the wait"
+grep -qF 'feat/x' "$tmp/guard.out" || fail "the head branch must be printed before the wait"
+[ "$(grep -n -m1 -e 'cocreiamo/x/pull/7' "$tmp/guard.out" | cut -d: -f1)" = 1 ] || fail "the PR line must come first, before gh output"
+grep -qF 'gh pr view 7 --json url,headRefName' <<< "$log" || fail "the guard asks gh for the PR's url and head branch"
+
+name=guardfail; run guardfail HEAD_FAIL=1 -- 7
+[ "$rc" = 0 ] || fail "an unreadable PR header must not stop the wait, got $rc"
+grep -qF 'could not read the PR' "$tmp/guardfail.out" || fail "an unreadable PR header must be said, not skipped silently"
+
 name=slow; run slow PR_WAIT_INTERVAL=5 --
 grep -qF -- '--interval 60' <<< "$log" || fail "an interval under 60 s must be raised to 60"
 
 name=runmode; run runmode -- --run 99
 grep -qF 'gh run watch 99 --exit-status --interval 60' <<< "$log" || fail "a run is watched with --exit-status and --interval 60"
+! grep -qF headRefName <<< "$log" || fail "a run has no PR header to print"
 
 name=limited; run limited LIMITED_CALLS=1 --
 [ "$rc" = 0 ] || fail "a rate limit must be slept through, then succeed; got $rc"
