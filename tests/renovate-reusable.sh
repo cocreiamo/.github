@@ -58,6 +58,50 @@ for bad in '{"PATH":"x"}' '{"renovate_x":"x"}' '{"RENOVATE_TOKEN":"x"}' '{"RENOV
 done
 ! grep -qF '"x"' "$tmp/out" || fail "a refusal must not echo values (extra-env-secret may hold a secret)"
 
+steps='.jobs.renovate.steps[]'
+for n in 1 2; do
+  yq -e "[$steps | select(has(\"uses\") and (.uses | test(\"renovatebot/github-action\"))) | .env.RENOVATE_LOG_FILE] | any_c(. == \"/tmp/renovate-$n.log\")" "$wf" >/dev/null \
+    || fail "attempt $n of Renovate must write its JSON log to /tmp/renovate-$n.log (the runner temp folder): the result of the run is read from it"
+done
+yq -e "[$steps | select(has(\"uses\") and (.uses | test(\"renovatebot/github-action\"))) | .env.RENOVATE_LOG_FILE_LEVEL] | all_c(. == \"info\")" "$wf" >/dev/null \
+  || fail "every Renovate attempt must set RENOVATE_LOG_FILE_LEVEL to info"
+yq -e '[.jobs.renovate.steps[] | select(has("uses") and (.uses | test("renovatebot/github-action"))) ] | length == 2' "$wf" >/dev/null \
+  || fail "$wf must run Renovate twice at most: the second attempt is the retry after repository-changed"
+yq -e '[.jobs.renovate.steps[] | select(.name == "renovate retry") | .if] | all_c(test("steps[.]classify[.]outputs[.]status == .retry."))' "$wf" >/dev/null \
+  || fail "the second Renovate attempt must run only when the first ended repository-changed"
+yq -e '.jobs.renovate.steps[-1].name == "renovate result" and (.jobs.renovate.steps[-1].if | test("always"))' "$wf" >/dev/null \
+  || fail "the last step of the renovate job must be 'renovate result' and run always: a Renovate run that did not finish must turn the job red"
+yq -N '.jobs.renovate.steps[] | select(.name == "renovate result") | .env.SCRIPT' "$wf" > "$tmp/result.py"
+[ -s "$tmp/result.py" ] && [ "$(cat "$tmp/result.py")" != null ] || fail "$wf has no step 'renovate result' with env SCRIPT"
+yq -N '.jobs.renovate.steps[] | select(.id == "classify") | .env.SCRIPT' "$wf" > "$tmp/classify.py"
+[ -s "$tmp/classify.py" ] && [ "$(cat "$tmp/classify.py")" != null ] || fail "$wf has no step 'classify' with env SCRIPT"
+log() { # <file> <result> <exitCode>: a Renovate JSON log whose repository finished like that
+  printf '%s\n' '{"level":30,"msg":"Renovate started"}' '{"level":40,"msg":"Cannot access vulnerability alerts."}' > "$1"
+  printf '{"level":30,"repository":"o/r","cloned":true,"result":"%s","status":"onboarded","enabled":true,"onboarded":true,"exitCode":%s,"msg":"Repository finished"}\n' "$2" "$3" >> "$1"
+}
+classify() { # <log...>: the status the classify step writes
+  : > "$tmp/out-status"
+  rc=0; RENOVATE_LOGS="$*" GITHUB_OUTPUT=$tmp/out-status python3 -I "$tmp/classify.py" > "$tmp/out" 2>&1 || rc=$?
+  sed -n 's/^status=//p' "$tmp/out-status"
+}
+final() { rc=0; RENOVATE_LOGS="$*" python3 -I "$tmp/result.py" > "$tmp/out" 2>&1 || rc=$?; }
+log "$tmp/ok.log" done 0
+log "$tmp/changed.log" repository-changed 6
+log "$tmp/bad.log" external-host-error 1
+printf '%s\n' '{"level":30,"msg":"Renovate started"}' > "$tmp/crash.log"
+[ "$(classify "$tmp/ok.log")" = ok ] || fail "a finished repository (exitCode 0) must classify as ok"
+[ "$(classify "$tmp/changed.log")" = retry ] || fail "repository-changed must classify as retry"
+[ "$(classify "$tmp/bad.log")" = fail ] || fail "any other non-zero result must classify as fail"
+[ "$(classify "$tmp/crash.log")" = fail ] || fail "a log without «Repository finished» must classify as fail"
+[ "$(classify "$tmp/missing.log")" = fail ] || fail "a missing log must classify as fail"
+final "$tmp/ok.log"; [ "$rc" = 0 ] || fail "a finished repository must pass the final check"
+final "$tmp/changed.log"; [ "$rc" != 0 ] || fail "repository-changed on the only attempt must turn the run red (it went green on 2026-11-11 with the Go security bump missed)"
+final "$tmp/changed.log" "$tmp/ok.log"; [ "$rc" = 0 ] || fail "a retry that finished must make the run green"
+final "$tmp/changed.log" "$tmp/changed.log"; [ "$rc" != 0 ] || fail "repository-changed twice must turn the run red"
+final "$tmp/ok.log" "$tmp/bad.log"; [ "$rc" != 0 ] || fail "the last attempt decides: a failed retry must turn the run red"
+final "$tmp/crash.log"; [ "$rc" != 0 ] || fail "a log without «Repository finished» must turn the run red"
+final "$tmp/missing.log"; [ "$rc" != 0 ] || fail "a missing log must turn the run red"
+
 yq -e '(.on | keys | join(",")) == "schedule,workflow_dispatch"' "$caller" >/dev/null || fail "$caller must run on a schedule and on demand"
 yq -e '.jobs.renovate.uses == "./.github/workflows/renovate.yml" and .jobs.renovate.permissions.contents == "read" and .jobs.renovate.permissions.actions == "read" and .jobs.renovate.permissions.issues == "write"
   and (.jobs.renovate.secrets."app-private-key" | test("CLAUDE_CODE_PR_APP_PRIVATE_KEY"))' "$caller" >/dev/null \

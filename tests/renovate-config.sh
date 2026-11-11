@@ -39,4 +39,8 @@ jq -e '.platformAutomerge == true and ([.packageRules[] | select(.automerge == t
 if jq -e '[.packageRules[] | select(.matchUpdateTypes != null and (.matchUpdateTypes | index("major")) and .automerge == true)] | length == 0 | not' default.json >/dev/null; then
   fail "the shared preset merges a major update by itself: majors stay PRs with the changelog"
 fi
+jq -e '.osvVulnerabilityAlerts == true' default.json >/dev/null \
+  || fail "the shared preset does not read OSV vulnerability alerts: the GitHub alerts need a permission the App token may lack, OSV needs none"
+jq -e '.vulnerabilityAlerts | .enabled != false and (.schedule == ["at any time"]) and (.minimumReleaseAge == "0 days") and .prCreation == "immediate"' default.json >/dev/null \
+  || fail "a security fix must bypass the schedule and the release age: vulnerabilityAlerts needs schedule «at any time», minimumReleaseAge «0 days» and prCreation immediate"
 echo "renovate-config ok"
