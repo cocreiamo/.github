@@ -81,6 +81,7 @@ IMAGES = {
     "traefik": "traefik",
 }
 SKIP_DIRS = {".git", ".terraform", "node_modules", "charts", "__pycache__"}
+SKIP_PREFIXES = ("docs/research/",)
 IMAGE_LINE = re.compile(r"^\s*(?:-\s*)?image:\s*[\"']?(?P<ref>[^\s\"'#]+)")
 FROM_LINE = re.compile(r"^FROM\s+(?:--platform=\S+\s+)?(?P<ref>\S+)", re.I)
 MISE_LINE = re.compile(r'^\s*"?(?P<tool>[A-Za-z0-9:_./-]+)"?\s*=\s*(?:"(?P<v1>[^"]+)"|\{[^}]*\bversion\s*=\s*"(?P<v2>[^"]+)")')
@@ -96,12 +97,16 @@ class Pin:
 def files_of(root):
     try:
         out = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True, check=True).stdout.split("\n")
-        found = [root / f for f in out if f and not set(pathlib.PurePath(f).parts) & SKIP_DIRS]
+        found = [root / f for f in out if f and not set(pathlib.PurePath(f).parts) & SKIP_DIRS and not f.startswith(SKIP_PREFIXES)]
         if found:
             return [f for f in found if f.is_file()]
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    return [p for p in root.rglob("*") if p.is_file() and not set(p.relative_to(root).parts) & SKIP_DIRS]
+    return [
+        p
+        for p in root.rglob("*")
+        if p.is_file() and not set(p.relative_to(root).parts) & SKIP_DIRS and not p.relative_to(root).as_posix().startswith(SKIP_PREFIXES)
+    ]
 
 
 def clean(version):

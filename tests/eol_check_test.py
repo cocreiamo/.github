@@ -112,6 +112,14 @@ class Discovery(unittest.TestCase):
         )
         self.assertEqual(pins, set())
 
+    def test_pages_saved_under_docs_research_are_skipped(self):
+        pins, _ = self.pins(
+            {"docs/research/x/sources/Dockerfile": "FROM python:2.7\n", "docs/other/Dockerfile": "FROM python:2.7\n"}
+        )
+        files = [p.file for p in pins]
+        self.assertTrue(any(f.endswith("docs/other/Dockerfile") for f in files))
+        self.assertFalse(any("docs/research" in f for f in files))
+
 
 class Evaluation(unittest.TestCase):
     def run_check(self, pins, days=60):
