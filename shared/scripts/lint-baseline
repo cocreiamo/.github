@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="The shared lint baseline of every own script, config and file: shellcheck and shfmt on shell, ruff check and format on Python, yamllint --strict on YAML, gitleaks on the tree; tracked files only, vendored copies (.github/shared-scripts) and the deliberate fixtures (tests/*/bad, tests/*/good) skipped. One part only: shell, python, yaml, secrets"
+#MISE description="The shared lint baseline of every own script, config and file: shellcheck and shfmt on shell, ruff check and format on Python, yamllint --strict on YAML, gitleaks on the tree; tracked files only, vendored copies (.github/shared-scripts), templates (*.j2, *.jinja, *.jinja2, *.tmpl, *.tpl, *.erb, *.mustache) and the deliberate fixtures (tests/*/bad, tests/*/good) skipped. One part only: shell, python, yaml, secrets"
 # lint-baseline [shell|python|yaml|secrets|all|--fast]   runs at the root of the repository (a vendored copy sits wherever .github/shared-scripts puts it).
 #   lint-baseline --list shell|python   prints the files that part checks.
 # The rules are the repository's own configuration (.shellcheckrc, .editorconfig for shfmt, ruff.toml or pyproject.toml, .yamllint, .gitleaks.toml): the
@@ -19,6 +19,7 @@ own_files() {
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     case "$f" in tests/*/bad/* | tests/*/good/*) continue ;; esac
     [ -z "${vendored[$f]:-}" ] || continue
+    case "$f" in *.j2 | *.jinja | *.jinja2 | *.tmpl | *.tpl | *.erb | *.mustache) continue ;; esac
     case "$kind:$f" in
     shell:*.sh | python:*.py | yaml:*.yaml | yaml:*.yml | yaml:.yamllint | yaml:*/.yamllint)
       printf '%s\n' "$f"
