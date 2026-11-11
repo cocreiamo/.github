@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#MISE description="The shared lint baseline of every own script, config and file: shellcheck and shfmt on shell, ruff check and format on Python, yamllint --strict on YAML, gitleaks on the tree; tracked files only, vendored copies (.github/shared-scripts) and the deliberate fixtures (tests/*/bad, tests/*/good) skipped. One part only: shell, python, yaml, secrets"
+# lint-baseline [shell|python|yaml|secrets|all|--fast]   runs at the root of the repository (a vendored copy sits wherever .github/shared-scripts puts it).
+#   lint-baseline --list shell|python   prints the files that part checks.
+# The rules are the repository's own configuration (.shellcheckrc, .editorconfig for shfmt, ruff.toml or pyproject.toml, .yamllint, .gitleaks.toml): the
+# script decides what is checked, the configs decide how strictly. Needs shellcheck, shfmt, ruff, yamllint and gitleaks (the shared mise tools block pins them).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+declare -A vendored=()
+if [ -f .github/shared-scripts ]; then
+  while read -r _ path _; do [ -z "${path:-}" ] || vendored["$path"]=1; done < <(grep -vE '^[[:space:]]*(#|$)' .github/shared-scripts)
+fi
+
+# own_files shell|python|yaml: tracked files of that kind, minus the vendored copies and the fixtures that must stay byte-exact
+own_files() {
+  local kind=$1 f
+  while IFS= read -r -d '' f; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    case "$f" in tests/*/bad/* | tests/*/good/*) continue ;; esac
+    [ -z "${vendored[$f]:-}" ] || continue
+    case "$kind:$f" in
+    shell:*.sh | python:*.py | yaml:*.yaml | yaml:*.yml | yaml:.yamllint | yaml:*/.yamllint)
+      printf '%s\n' "$f"
+      continue
+      ;;
+    yaml:*) continue ;;
+    esac
+    case "$kind" in
+    shell) head -n 1 "$f" 2>/dev/null | grep -aqE '^#!.*(bash|dash|/sh|env +(-S +)?sh)( |$)' && printf '%s\n' "$f" ;;
+    python) head -n 1 "$f" 2>/dev/null | grep -aqE '^#!.*(python|uv run)' && printf '%s\n' "$f" ;;
+    esac
+  done < <(git ls-files -z)
+  return 0
+}
+
+lint_shell() {
+  local files
+  mapfile -t files < <(own_files shell)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  shellcheck "${files[@]}"
+  shfmt -d "${files[@]}"
+}
+
+lint_python() {
+  local files
+  mapfile -t files < <(own_files python)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  ruff check --force-exclude "${files[@]}"
+  ruff format --check --force-exclude "${files[@]}"
+}
+
+lint_yaml() {
+  local files
+  mapfile -t files < <(own_files yaml)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  yamllint --strict "${files[@]}"
+}
+
+lint_secrets() {
+  local tree f
+  tree=$(mktemp -d)
+  # shellcheck disable=SC2064 # the path is fixed now, on purpose
+  trap "rm -rf '$tree'" RETURN
+  while IFS= read -r -d '' f; do
+    { [ -f "$f" ] || [ -L "$f" ]; } && printf '%s\0' "$f"
+  done < <(git ls-files -z) | tar --null -T - -cf - | tar -xf - -C "$tree"
+  (cd "$tree" && gitleaks dir . --no-banner --redact --verbose --exit-code 1)
+}
+
+if [ "${1:-}" = "--list" ]; then
+  own_files "${2:?shell or python}"
+  exit 0
+fi
+case "${1:-all}" in
+shell) lint_shell ;;
+python) lint_python ;;
+yaml) lint_yaml ;;
+secrets) lint_secrets ;;
+all | --fast)
+  lint_shell
+  lint_python
+  lint_yaml
+  lint_secrets
+  ;;
+*)
+  echo "unknown part: $1" >&2
+  exit 2
+  ;;
+esac
