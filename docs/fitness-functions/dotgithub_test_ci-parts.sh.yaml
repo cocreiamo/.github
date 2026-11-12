@@ -1,0 +1,7 @@
+id: dotgithub/test/ci-parts.sh
+repo: dotgithub
+invariant: The shared ci-parts picks the parts of `mise run ci` from the sources of the ci:<part> tasks, prepush runs exactly those, and check refuses a part that would not run when it changes.
+runs:
+- pr-ci
+command: bash tests/ci-parts.sh
+file: tests/ci-parts.sh
