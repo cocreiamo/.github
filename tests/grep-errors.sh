@@ -30,7 +30,7 @@ expect() {
   return 0
 }
 # scan_case <label> <prefix> <forbidden body> <clean body> <prepare function> <command...>: red on a small tree and on a tree over ARG_MAX whose last file has
-# the form, green on a tree over ARG_MAX without it
+# the form, green on a tree over ARG_MAX without it (clean_big=0 skips that run for the scripts that read file by file: it costs a process per file)
 scan_case() {
   local label=$1 prefix=$2 bad=$3 clean=$4 prepare=$5 d
   shift 5
@@ -43,6 +43,7 @@ scan_case() {
   printf '%s\n' "$bad" >"$d/${prefix}zzz-last.sh"
   "$prepare" "$d"
   expect red "$label (tree over ARG_MAX)" "$d" "$@"
+  [ "${clean_big:-1}" = 1 ] || return 0
   printf '%s\n' "$clean" >"$d/${prefix}zzz-last.sh"
   "$prepare" "$d"
   expect green "$label (clean tree over ARG_MAX)" "$d" "$@"
@@ -65,8 +66,25 @@ cp "$repo/shared/scripts/gh-watch-interval.sh" "$repo/shared/scripts/mktemp-trap
 watch="$(printf 'gh pr checks 1 --%s' watch)"
 scan_case gh-watch-interval '' "$watch" 'echo clean' as_repo "$tmp/s/gh-watch-interval.sh"
 scan_case docker-mounts tests/ 'docker run -v /tmp/x:/t img' 'echo clean' as_docker_repo bash mise-tasks/test/docker-mounts
-scan_case git-env-cleared '' "$(printf '#!/usr/bin/env bash\ngit %s -q d' init)" '#!/usr/bin/env bash' plain "$tmp/s/git-env-cleared" .
-scan_case mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mktemp)" '#!/usr/bin/env bash' plain "$tmp/s/mktemp-trap-check" .
+clean_big=0 scan_case git-env-cleared '' "$(printf '#!/usr/bin/env bash\ngit %s -q d' init)" '#!/usr/bin/env bash' plain "$tmp/s/git-env-cleared" .
+clean_big=0 scan_case mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mktemp)" '#!/usr/bin/env bash' plain "$tmp/s/mktemp-trap-check" .
+
+# an unreadable file is an error, not a clean file (root reads everything, so the case needs another user)
+if [ "$(id -u)" -ne 0 ]; then
+  unreadable() { # unreadable <label> <prefix> <body> <prepare function> <command...>
+    local label=$1 prefix=$2 body=$3 prepare=$4 d="$tmp/unreadable-$1"
+    shift 4
+    rm -rf "$d" && mkdir -p "$d/$prefix"
+    printf '%s\n' "$body" >"$d/${prefix}zzz-last.sh"
+    "$prepare" "$d"
+    chmod 000 "$d/${prefix}zzz-last.sh"
+    expect red "$label (unreadable file)" "$d" "$@"
+  }
+  unreadable gh-watch-interval '' "$watch" as_repo "$tmp/s/gh-watch-interval.sh"
+  unreadable docker-mounts tests/ 'docker run -v /tmp/x:/t img' as_docker_repo bash mise-tasks/test/docker-mounts
+  unreadable git-env-cleared '' "$(printf '#!/usr/bin/env bash\ngit %s -q d' init)" plain "$tmp/s/git-env-cleared" .
+  unreadable mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mktemp)" plain "$tmp/s/mktemp-trap-check" .
+fi
 
 check="$repo/tools/grep-errors-check"
 [ -x "$check" ] || fail "tools/grep-errors-check is missing"

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# grep-errors-check [repository root]: refuses the grep forms that read an error as "no match" in the scripts and tests of this repository (shared/scripts, tests, hooks, tools).
+# grep exits 1 for no match and 2 for an error (an unreadable file, a bad pattern, an argument list too long); `grep ... || true` and `xargs grep` (xargs exits 123 for both) hide the
+# second as the first, so a check passes on files it never read. The safe forms: `|| [ $? -eq 1 ]`, a NUL-separated list through xargs -0 with a wrapper that fails on exit 2 (see
+# grep_files in shared/scripts/gh-watch-interval.sh). Comment lines and this check with its test (tests/grep-errors.sh holds the unsafe forms as fixtures) are not scanned.
+set -euo pipefail
+root="$(cd "${1:-.}" && pwd)"
+cd "$root"
+unsafe='xargs[^|]*[[:space:]]grep([[:space:]]|$)|\bgrep\b([^<]|<[^<])*\|\|[[:space:]]*(true|:)([^[:alnum:]_-]|$)'
+dirs=()
+for d in shared/scripts tests hooks tools; do [ ! -d "$d" ] || dirs+=("$d"); done
+[ "${#dirs[@]}" -gt 0 ] || { echo "grep-errors-check: nothing to scan under $root" >&2; exit 1; }
+# shellcheck disable=SC2016 # the script is bash -c's, expanded there
+hits="$(find "${dirs[@]}" -type f -not -path tools/grep-errors-check -not -path tests/grep-errors.sh -print0 | sort -z |
+  xargs -0 -r -- bash -c 'grep -nIHE -e "$0" "$@"; rc=$?; [ "$rc" -le 1 ] || exit 255' "$unsafe")"
+hits="$(grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' <<<"$hits" || [ $? -eq 1 ])"
+if [ -n "$hits" ]; then
+  echo "$hits" >&2
+  echo "grep-errors-check: a grep whose error counts as no match (use '|| [ \$? -eq 1 ]', or a NUL list through grep_files, or fail on exit 2)" >&2
+  exit 1
+fi
+echo "grep-errors-check: no script reads a grep error as no match"

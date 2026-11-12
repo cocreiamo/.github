@@ -97,7 +97,7 @@ literal_git='\bgit( +-[-A-Za-z]+( +[^ -][^ ]*)?)* +(init|commit|commit-tree)\b'
 printf '%s\n' "git commit -m x" "git -C d init" "git -c a=b commit-tree T" > "$tmp/bad-literal"
 [ "$(grep -cE "$literal_git" "$tmp/bad-literal")" = 3 ] || fail "the literal git pattern does not catch git commit, init and commit-tree"
 printf '%s\n' "git log --grep commit" "git status" > "$tmp/ok-literal"
-[ "$(grep -cE "$literal_git" "$tmp/ok-literal" || true)" = 0 ] || fail "the literal git pattern catches a command that is not git init or commit"
+[ "$(grep -cE "$literal_git" "$tmp/ok-literal" || [ $? -eq 1 ])" = 0 ] || fail "the literal git pattern catches a command that is not git init or commit"
 for f in "$scripts"/*-test "$scripts"/*.sh; do
   [ "${f##*/}" != worktrees-test ] || continue
   ! grep -qE "$literal_git" "$f" || fail "${f##*/} runs a literal git init/commit: the monorepo's hermetic-git check refuses it; build the command from parts or use another command"
