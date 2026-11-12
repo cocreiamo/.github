@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Wait for a PR's required checks (or --run <id>) at 60 s polls, through a GitHub rate limit: mise run pr:wait [<pr>|--run <id>]"
-# Every agent shares one user token of 5000 REST requests an hour: gh's own defaults (10 s for pr checks, 3 s for run watch)
+# A draft or a PR without auto-merge is refused with exit 2. Every agent shares one user token of 5000 REST requests an hour: gh's own defaults (10 s for pr checks, 3 s for run watch)
 # exhaust it with a few waits at once. Exit 0 the PR is merged (a required check that has not reported yet makes gh exit 0 early, so green alone is not enough), 1 a check failed or the PR closed (checks GitHub has not registered yet are pending), 75 still pending after PR_WAIT_BUDGET seconds (540):
 # repeat the same command in the foreground. A rate-limit answer is slept through until the reset gh api rate_limit reports.
 set -euo pipefail
@@ -18,8 +18,17 @@ else
 fi
 
 if [ "${cmd[1]}" = pr ]; then
-  gh pr view "$@" --json url,headRefName --jq '"pr:wait: waiting for \(.url) (head branch \(.headRefName))"' ||
+  # A draft or a PR without auto-merge never merges by itself: waiting for its merge would only spend the budget.
+  if header="$(gh pr view "$@" --json url,headRefName,isDraft,autoMergeRequest \
+    --jq '"pr:wait: waiting for \(.url) (head branch \(.headRefName))", (if .isDraft then "draft" elif .autoMergeRequest == null then "unarmed" else "armed" end)')"; then
+    echo "${header%$'\n'*}"
+    case "${header##*$'\n'}" in
+      draft) echo "refused: the PR is a draft and never merges; mark it ready (gh pr ready) or read its checks once with gh pr checks" >&2; exit 2 ;;
+      unarmed) echo "refused: auto-merge is off, so the PR never merges by itself; arm it (gh pr merge --auto --squash) or read its checks once with gh pr checks" >&2; exit 2 ;;
+    esac
+  else
     echo "pr:wait: could not read the PR header: is this the right repository?" >&2
+  fi
 fi
 
 out="$(mktemp)"
