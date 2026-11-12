@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#MISE description="Run one registry call with Harbor's retry policy: harbor-retry WHAT COMMAND [ARG...]; harbor-retry --kind FILE prints how a failure output is sorted"
+# Every call to the registry (push, cosign sign/attest/verify, syft's pull) goes through this script, which sorts a failure by what
+# Harbor said:
+#   pending    a scan still to come: a 412 (HEAD has no body), or PROJECTPOLICYVIOLATION with Running, Pending, Queued, Scheduled, "is not
+#              scanned" or "has not been scanned". Waited for in polls of HARBOR_SCAN_POLL_SECONDS up to HARBOR_SCAN_TIMEOUT_SECONDS. The
+#              public registry routes only /v2/ and /service/token, so the scan cannot be started or queried through Harbor's API; it
+#              starts on push. On the main runs of 2026-11-07 the waits of a whole run (three apps) were 1 to 6 minutes and one run
+#              needed more than 10: the bound is 20 minutes.
+#   transient  the network or Harbor failed, nobody judged anything (connection reset or refused, i/o or TLS handshake timeout, EOF,
+#              HTTP 5xx, 429): retried HARBOR_TRANSIENT_ATTEMPTS times in all, waiting HARBOR_RETRY_BASE_SECONDS doubled each time, at
+#              most 60 s.
+#   verdict    any other PROJECTPOLICYVIOLATION (a finished scan: prevent_vul applies, or the scanner ended in Error): final.
+#   permanent  anything else, authentication and authorization (401, 403) included: final.
+# HARBOR_SUBJECT names the image in the messages.
+set -euo pipefail
+
+kind() {
+  local f="$1"
+  if grep -qE 'status code 412|412 Precondition' "$f"; then
+    echo pending
+  elif grep -q 'PROJECTPOLICYVIOLATION' "$f"; then
+    if grep -qiE 'scan is in "(Running|Pending|Queued|Scheduled)" status|is not scanned|has not been scanned' "$f"; then echo pending; else echo verdict; fi
+  elif grep -qiE 'status code (401|403)|UNAUTHORIZED|DENIED|authentication required' "$f"; then
+    echo permanent
+  elif grep -qiE 'TLS handshake timeout|connection reset|connection refused|i/o timeout|timeout awaiting|unexpected EOF|\bEOF\b|context deadline exceeded|no such host|temporary failure|server misbehaving|status code (429|500|502|503|504)|TOOMANYREQUESTS|internal server error|bad gateway|service unavailable|gateway time-?out' "$f"; then
+    echo transient
+  else
+    echo permanent
+  fi
+}
+
+if [ "${1:-}" = --kind ]; then
+  kind "${2:?usage: harbor-retry --kind FILE}"
+  exit 0
+fi
+
+what="${1:?usage: harbor-retry WHAT COMMAND [ARG...]}"
+shift
+[ $# -gt 0 ] || {
+  echo "usage: harbor-retry WHAT COMMAND [ARG...]" >&2
+  exit 2
+}
+subject="${HARBOR_SUBJECT:-the image}"
+polls=$((${HARBOR_SCAN_TIMEOUT_SECONDS:-1200} / ${HARBOR_SCAN_POLL_SECONDS:-10}))
+tries="${HARBOR_TRANSIENT_ATTEMPTS:-6}"
+pending=0 transient=0 last=""
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+while :; do
+  if "$@" 2>&1 | tee "$out"; then exit 0; fi
+  case "$(kind "$out")" in
+  pending)
+    pending=$((pending + 1))
+    [ "$pending" -lt "$polls" ] || break
+    echo "Harbor refuses the $what while the scan is pending (412 or PROJECTPOLICYVIOLATION with a scan not finished); attempt $pending of $polls, waiting" >&2
+    last="$(grep -oE 'scan is in "[A-Za-z]+" status|status code 412|is not scanned|has not been scanned' "$out" | tail -n 1 | sed -E 's/scan is in "([A-Za-z]+)" status/\1/; s/status code 412/412 (manifest not scanned yet)/')"
+    sleep "${HARBOR_SCAN_POLL_SECONDS:-10}"
+    ;;
+  transient)
+    transient=$((transient + 1))
+    if [ "$transient" -ge "$tries" ]; then
+      echo "the $what of $subject failed $tries times with transient errors (network or Harbor 5xx): giving up" >&2
+      exit 1
+    fi
+    delay=$(("${HARBOR_RETRY_BASE_SECONDS:-5}" << (transient - 1)))
+    [ "$delay" -le 60 ] || delay=60
+    echo "transient error on the $what of $subject (attempt $transient of $tries), retrying in ${delay}s" >&2
+    sleep "$delay"
+    ;;
+  verdict)
+    if grep -q 'vulnerability scan is in "Error" status' "$out"; then
+      echo "Harbor's scan of the $what ended in Error (the scanner failed and left no result, so no CVE was judged): not retried; re-run the scan in Harbor and check the scanner" >&2
+    else
+      echo "Harbor refused the $what with a vulnerability verdict (the scan finished, prevent_vul applies): not retried; the image needs a fix or a reviewed CVE allowlist entry" >&2
+    fi
+    exit 1
+    ;;
+  *) exit 1 ;;
+  esac
+done
+echo "$what of $subject still refused by Harbor after ${HARBOR_SCAN_TIMEOUT_SECONDS:-1200}s (last status: ${last:-unknown}) although the local Trivy scan found no critical vulnerability: Harbor's scan is pending or fails, or its DB differs from the local one (see the scan above for the DB used)" >&2
+exit 1

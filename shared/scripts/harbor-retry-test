@@ -3,6 +3,7 @@
 # registry failure (a scan still pending, a transient network or 5xx error, a verdict, an authentication refusal), retries a transient
 # failure until it passes, waits for a pending scan, never retries a verdict or a refusal, and gives up after its attempts; image-sign and
 # image-scan refuse to run without their arguments. Stub commands, no registry.
+# shellcheck disable=SC2016 # the stub command is script text, not expanded here
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 dir="$repo/shared/scripts"
@@ -12,7 +13,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 [ -x "$retry" ] && [ -x "$dir/image-scan" ] && [ -x "$dir/image-sign" ] || fail "harbor-retry, image-scan and image-sign must sit side by side in $dir"
-export HARBOR_SCAN_POLL_SECONDS=0 HARBOR_SCAN_TIMEOUT_SECONDS=3 HARBOR_RETRY_BASE_SECONDS=0 HARBOR_TRANSIENT_ATTEMPTS=3
+export HARBOR_SCAN_POLL_SECONDS=1 HARBOR_SCAN_TIMEOUT_SECONDS=3 HARBOR_RETRY_BASE_SECONDS=0 HARBOR_TRANSIENT_ATTEMPTS=3
 
 kind_is() { printf '%s\n' "$2" > "$tmp/f"; [ "$("$retry" --kind "$tmp/f")" = "$1" ] || fail "'$2' sorted as $("$retry" --kind "$tmp/f"), not $1"; }
 kind_is pending 'unexpected status code 412 Precondition Failed'

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#MISE description="Harbor's prevent_vul policy before a push, with the pinned Trivy: image-scan prepare downloads the DB (retried); image-scan [--base REF] NAME TARGET... fails on any critical vulnerability, fixed or not, of each target (an OCI layout directory or a local Docker image)"
+# Harbor (project cocreiamo) refuses to serve a manifest whose scan found a critical vulnerability, fixed or not. The same policy runs here,
+# before anything is pushed: the verdict comes early and names the CVEs with their fixed versions. Bazel's layout links the base layers into
+# the external repository and Trivy refuses a symlinked blob (it passes only while its cache holds the layer), so a layout is scanned from a
+# copy with the links resolved. The DB lives in the cache the runner host names in TRIVY_CACHE_DIR.
+# --base REF names the base image a Docker target was built FROM: a critical finding in one of its layers is the base image's (owned by
+# infrastructure, fixed by bumping the base), the others are the image's own; the verdict is the same, the owner of the fix differs.
+set -euo pipefail
+
+prepare() {
+  local attempt attempts=5
+  if [ "${CI:-}" = true ]; then
+    [ -z "${TRIVY_CACHE_DIR:-}" ] || mkdir -p "$TRIVY_CACHE_DIR"
+  fi
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if trivy image --download-db-only --quiet --no-progress --skip-version-check; then return 0; fi
+    echo "Trivy DB download failed (attempt $attempt of $attempts)" >&2
+    [ "$attempt" = "$attempts" ] || sleep $((attempt * 15))
+  done
+  echo "the Trivy DB could not be downloaded: no scan, no push" >&2
+  return 1
+}
+
+if [ "${1:-}" = prepare ]; then
+  prepare
+  exit
+fi
+
+base=""
+if [ "${1:-}" = --base ]; then
+  base="${2:?--base needs an image reference}"
+  shift 2
+fi
+name="${1:?usage: image-scan [--base REF] NAME TARGET...}"
+shift
+[ $# -gt 0 ] || {
+  echo "usage: image-scan [--base REF] NAME TARGET..." >&2
+  exit 2
+}
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+gate=(--scanners vuln --severity CRITICAL --skip-db-update --skip-version-check --no-progress)
+
+triage() {
+  local target="$1"
+  docker image inspect --format '{{json .RootFS.Layers}}' "$base" >"$work/base-layers.json" || {
+    echo "the base image $base is not in the local Docker store: no triage" >&2
+    return 0
+  }
+  trivy image --image-src docker --format json "${gate[@]}" "$target" >"$work/findings.json" || return 0
+  jq -r --slurpfile base "$work/base-layers.json" '
+    [.Results[]?.Vulnerabilities[]? | {id: .VulnerabilityID, pkg: .PkgName, fixed: (.FixedVersion // "no fix"),
+      owner: (if (.Layer.DiffID // "") as $d | $base[0] | index($d) then "base" else "own" end)}]
+    | (map(select(.owner == "base")) | if length > 0 then "in the base image (owned by infrastructure: bump or patch the base): " + (map("\(.id) \(.pkg) (\(.fixed))") | join(", ")) else empty end),
+      (map(select(.owner == "own")) | if length > 0 then "in the image'"'"'s own layers (fixed in the product): " + (map("\(.id) \(.pkg) (\(.fixed))") | join(", ")) else empty end)
+  ' "$work/findings.json" | sed "s|^|$name: |" >&2
+}
+
+refused=0
+n=0
+for target in "$@"; do
+  n=$((n + 1))
+  echo "Trivy scan of $name ($target)"
+  if [ -d "$target" ]; then
+    layout="$work/layout-$n-$(basename "$target")"
+    mkdir -p "$layout"
+    cp -rL --no-preserve=mode "$target/." "$layout"
+    trivy image --input "$layout" "${gate[@]}" --exit-code 1 || refused=1
+  else
+    if ! trivy image --image-src docker "${gate[@]}" --exit-code 1 "$target"; then
+      refused=1
+      [ -z "$base" ] || triage "$target"
+    fi
+  fi
+done
+[ "$refused" = 0 ] || {
+  echo "$name has critical vulnerabilities (Harbor's prevent_vul would refuse it): nothing is pushed; the base image needs a fix or a reviewed CVE allowlist entry" >&2
+  exit 1
+}
