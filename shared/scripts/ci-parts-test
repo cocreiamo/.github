@@ -21,7 +21,7 @@ git_repo() {
   "$vcs" -C "$1" config commit.gpgsign false
 }
 export MISE_TRUSTED_CONFIG_PATHS="$tmp"
-unset CI_BASE GITHUB_OUTPUT
+unset CI_BASE GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_EVENT_NAME CI_PARTS_FORCE
 
 r="$tmp/r"
 git_repo "$r"
