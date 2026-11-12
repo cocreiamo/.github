@@ -233,6 +233,10 @@ backend = "npm:renovate"
 [tools."npm:renovate".options]
 trust_policy_excludes = '["@yarnpkg/libzip@3.2.2"]'
 
+[[tools."pipx:check-jsonschema"]]
+version = "0.39.0"
+backend = "pipx:check-jsonschema"
+
 [[tools."pipx:pre-commit"]]
 version = "4.6.0"
 backend = "pipx:pre-commit"
