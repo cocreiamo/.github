@@ -28,7 +28,7 @@ trap 'rm -f "$list"' EXIT
 # shellcheck disable=SC2016 # the script is bash -c's, expanded there
 git ls-files -z mise-tasks lib tests .github/workflows ':!tests/ci-docker/bad' ':!mise-tasks/test/docker-mounts' |
   while IFS= read -r -d '' f; do [ ! -e "$f" ] || printf '%s\0' "$f"; done |
-  xargs -0 -r -- bash -c 'grep -lIZ docker "$@"; rc=$?; [ "$rc" -le 1 ] || exit 255' grep-files > "$list"
+  xargs -0 -r -- bash -c 'grep -I -l -Z docker "$@"; rc=$?; [ "$rc" -le 1 ] || exit 255' grep-files > "$list"
 mapfile -d '' -t files < "$list"
 if [ "${#files[@]}" -gt 0 ] && hits=$(scan "${files[@]}") && [ -n "$hits" ]; then
   echo "docker run/create bind-mounts a local path in a script the CI runs:" >&2

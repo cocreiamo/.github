@@ -19,7 +19,7 @@ grep_files() {
 }
 offenders() { # offenders: reads NUL-separated paths, prints the lines that watch without a slow enough interval
   local hits
-  hits="$(grep_files -nHIE -e "$watches")" || return 1
+  hits="$(grep_files -n -H -I -E -e "$watches")" || return 1
   grep -vE -e "$slow" <<<"$hits" || [ $? -eq 1 ]
 }
 
