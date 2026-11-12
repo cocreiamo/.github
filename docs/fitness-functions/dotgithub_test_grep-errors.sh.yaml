@@ -1,0 +1,7 @@
+id: dotgithub/test/grep-errors.sh
+repo: dotgithub
+invariant: 'A check that greps for a forbidden pattern fails when grep fails (an argument list over ARG_MAX, an unreadable file) instead of passing on a tree it never read; the shared scripts are red on such a tree and the unsafe forms are refused.'
+runs:
+- pr-ci
+command: bash tests/grep-errors.sh
+file: tests/grep-errors.sh
