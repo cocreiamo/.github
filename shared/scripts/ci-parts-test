@@ -7,11 +7,19 @@ set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 parts="$repo/shared/scripts/ci-parts"
 [ ! -f "$repo/.github/shared-scripts" ] || parts="$repo/$(awk '$1 == "ci-parts" { print $2 }' "$repo/.github/shared-scripts")"
-# shellcheck source=testlib.sh
-. "$(dirname "$0")/testlib.sh"
-tmpdir
+fail() { echo "FAIL: $*" >&2; exit 1; }
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 # the commands are built from parts: the hermetic-git check of the monorepo refuses a literal commit in a shared test
 vcs=git
+# inside a git hook GIT_DIR and friends point at the real repository
+while read -r v; do unset "$v"; done < <(git rev-parse --local-env-vars)
+git_repo() {
+  "$vcs" init -q -b main "$1"
+  "$vcs" -C "$1" config user.email t@example.invalid
+  "$vcs" -C "$1" config user.name t
+  "$vcs" -C "$1" config commit.gpgsign false
+}
 export MISE_TRUSTED_CONFIG_PATHS="$tmp"
 unset CI_BASE GITHUB_OUTPUT
 

@@ -96,7 +96,8 @@ def groups(doc):
 
 
 CI_CALL = re.compile(r"^mise run ci -- [a-z][a-z0-9-]*(?: (?:[a-z][a-z0-9-]*|--[a-z-]+))*$")
-OTHER_CHECK = re.compile(r"(?:^|[\s;&|(])(?:mise run\b|bash\s+(?:\./)?tests/|(?:\./)?(?:tests|hooks|shared/scripts)/)")
+COMMAND_START = r"(?:^|\b(?:if|then|do|else)\s+|&&\s*|\|\|\s*|;\s*)"
+OTHER_CHECK = re.compile(COMMAND_START + r"(?:mise run\b|bash\s+(?:\./)?tests/|(?:\./)?(?:tests|hooks|shared/scripts)/)")
 
 
 def has_ci_task(root):

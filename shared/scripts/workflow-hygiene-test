@@ -99,6 +99,9 @@ for bad in 'mise run test:lint' 'mise run check' 'mise run ci:lint' 'bash tests/
   refused "a check run as '$bad'" "outside \`mise run ci -- <part>\`"
 done
 
+fixture "$(ci_wf "          if gh api x | grep -qE '^(platform/|tests/diff/)'; then echo mise run test:x; fi")"; has_ci
+accepted "a path or a command name inside a quoted pattern or an echo"
+
 fixture "$(ci_wf '          bash tests/x.sh')"
 accepted "a check call in a repository with no ci task"
 
