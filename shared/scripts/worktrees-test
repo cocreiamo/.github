@@ -62,7 +62,9 @@ pr chore/heldfile MERGED
 pr chore/ahead MERGED
 pr chore/orphan-merged MERGED
 pr chore/orphan-closed CLOSED
-git -C "$WT_ROOT/ahead" commit -q --allow-empty -m "chore: after the merge"
+echo after > "$WT_ROOT/ahead/after.txt"
+git -C "$WT_ROOT/ahead" add after.txt
+git -C "$WT_ROOT/ahead" commit -q -m "chore: after the merge"
 touch "$WT_ROOT/dirty/unsaved"
 git push -q origin chore/closed:refs/heads/chore/closed chore/orphan-closed:refs/heads/chore/stale-remote
 pr chore/stale-remote CLOSED "$(git rev-parse chore/orphan-closed)"
@@ -88,7 +90,12 @@ touch "$WT_ROOT/stale-touched/just-now"
 git config branch.chore/stale-hold.wtgc-hold true
 tree="$(git rev-parse "origin/main^{tree}")"
 aged git branch chore/stale-branch "$(aged git commit-tree -p origin/main -m "chore: old branch" "$tree")"
-aged git branch chore/stale-local-branch "$(aged git commit-tree -p origin/main -m "chore: old local-only branch" "$tree")"
+local_tree="$(git -C "$tmp/main" mktree < <(git -C "$tmp/main" ls-tree origin/main; printf '100644 blob %s\tlocal-only.txt\n' "$(echo local | git -C "$tmp/main" hash-object -w --stdin)"))"
+aged git branch chore/stale-local-branch "$(aged git commit-tree -p origin/main -m "chore: old local-only branch" "$local_tree")"
+# Changes already on main: a local-only commit whose tree is main's (a squash merge landed it), and a merged branch with a later
+# commit that main already has. Both lose nothing as a bundle, so wt:gc archives and removes them once stale.
+aged git branch chore/stale-landed "$(aged git commit-tree -p origin/main -m "chore: landed through a squash" "$tree")"
+aged git branch chore/stale-merged-landed "$(aged git commit-tree -p origin/main -m "chore: later commit main already has" "$tree")"
 git init -q --bare -b main "$tmp/mirror.git"
 git remote add mirror "$tmp/mirror.git"
 git push -q mirror chore/stale chore/stale-nopr chore/stale-held chore/stale-touched chore/stale-hold chore/stale-branch
@@ -101,6 +108,7 @@ pr chore/stale-held CLOSED
 pr chore/stale-touched CLOSED
 pr chore/stale-branch CLOSED
 pr chore/stale-remote-old CLOSED "$old_remote"
+pr chore/stale-merged-landed MERGED "$(git rev-parse origin/main)"
 pr chore/stale-remote-open OPEN "$old_remote"
 git fetch -q origin
 (cd "$WT_ROOT/held" && exec sleep 300) &
@@ -144,6 +152,8 @@ check "wt:gc removes a stale worktree with nothing to archive, writing no file" 
 check "wt:gc archives and removes a stale local branch without a worktree" bash -c '! git rev-parse -q --verify chore/stale-branch && [ -s "$1/chore-stale-branch.bundle" ] && [ ! -e "$1/chore-stale-branch.uncommitted.patch" ]' _ "$arch"
 check "wt:gc keeps a stale worktree whose commits exist on no remote, whole, and says it is unpushed work" bash -c '[ -d "$WT_ROOT/stale-local" ] && git rev-parse -q --verify chore/stale-local && [ -f "$WT_ROOT/stale-local/loose.txt" ] && ! ls "$1"/chore-stale-local.* 2>/dev/null && grep -q "unpushed work, kept.*chore/stale-local\|chore/stale-local.*unpushed work, kept" "$2" && grep -q "^report worktree chore/stale-local .*unpushed" "$2"' _ "$arch" "$tmp/gc"
 check "wt:gc keeps a stale local branch without a worktree whose commits exist on no remote" bash -c 'git rev-parse -q --verify chore/stale-local-branch && ! ls "$1"/chore-stale-local-branch.* 2>/dev/null && grep -q "^report branch chore/stale-local-branch: .*unpushed" "$2"' _ "$arch" "$tmp/gc"
+check "wt:gc archives as a bundle and removes a stale local-only branch whose changes are already on main" bash -c '! git rev-parse -q --verify chore/stale-landed && git bundle verify "$1/chore-stale-landed.bundle"' _ "$arch"
+check "wt:gc archives and removes a stale merged branch whose later commits are already on main" bash -c '! git rev-parse -q --verify chore/stale-merged-landed && [ -s "$1/chore-stale-merged-landed.bundle" ]' _ "$arch"
 check "wt:gc --dry-run never offers to archive or remove unpushed work" bash -c '! grep -q "would .*chore/stale-local" "$1"' _ "$tmp/dry"
 check "wt:gc keeps a stale pushed branch with the wtgc-hold flag" bash -c '[ -d "$WT_ROOT/stale-hold" ] && git rev-parse -q --verify chore/stale-hold && ! ls "$1"/chore-stale-hold.* 2>/dev/null && grep -q "skip.*chore/stale-hold.*hold" "$2"' _ "$arch" "$tmp/gc"
 check "wt:gc prints where each archive went" bash -c 'grep -q "archived chore/stale.*$1/chore-stale.bundle" "$2"' _ "$arch" "$tmp/gc"
