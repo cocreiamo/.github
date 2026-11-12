@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""container-leaks-check [repository root [path ...]]
+
+No test leaks a container when a timeout or a kill stops it: every `docker run` and `docker create` in a shell or Python script either carries --rm or both
+cocreiamo.test labels (`--label cocreiamo.test=1 --label cocreiamo.test.created=<epoch>`, or a helper named labels() / test_container_labels), so the hourly
+prune reaps a leaked one; a script that makes labelled containers also turns SIGTERM into an exit (a trap that names TERM, test_containers_init, exit_on_signals())
+so its cleanup runs. A statement vouches with `leak-ok: <why>` on its line or the one above.
+Allowlist: <root>/.github/container-leaks-allowlist, one line per file, or per directory when the path ends in "/": "<path> <reason>". A line without a reason, a
+path that no longer exists, and a file (or directory) with nothing left to excuse are refused: a stale line hides the next leak.
+Files come from `git ls-files` in a checkout, else from find; paths after the root limit the scan to those files or directories.
+"""
+import os
+import re
+import subprocess
+import sys
+
+CALL_PY = re.compile(r"""["']docker["']\s*,\s*["'](run|create)["']""")
+CALL_SH = re.compile(r"(?<![\w./-])docker\s+(run|create)\b")
+REMOVED = re.compile(r"""--rm\b|["']--rm["']""")
+HELPERS = re.compile(r"\blabels\(\)|\btest_container_labels\b")
+MARKER = "cocreiamo.test=1"
+CREATED = "cocreiamo.test.created="
+SIGNALS_PY = re.compile(r"\bexit_on_signals\(\)")
+SIGNALS_SH = re.compile(r"^\s*test_containers_init\b|(^|[;&\s])trap\s.*\bTERM\b", re.M)
+VOUCH = re.compile(r"leak-ok:\s*\S")
+SCRIPT = re.compile(r"^#!.*(bash|/sh|env sh|zsh|python)")
+
+
+def lineno(text, offset):
+    return text.count("\n", 0, offset) + 1
+
+
+def python_statement(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "[(":
+            depth += 1
+        elif text[i] in "])":
+            depth -= 1
+            if depth < 0:
+                return text[start:i]
+    return text[start:]
+
+
+def shell_statement(text, start):
+    end = start
+    while True:
+        end = text.find("\n", end)
+        if end == -1:
+            return text[start:]
+        if not text[start:end].rstrip().endswith("\\"):
+            return text[start:end]
+        end += 1
+
+
+def labelled(body):
+    return bool(HELPERS.search(body)) or (MARKER in body and CREATED in body)
+
+
+def violations(path, text):
+    found = []
+    lines = text.splitlines()
+    python = path.endswith(".py") or text.startswith("#!/usr/bin/env python") or text.startswith("#!/usr/bin/env -S uv run")
+    pattern, statement, signals = (CALL_PY, python_statement, SIGNALS_PY) if python else (CALL_SH, shell_statement, SIGNALS_SH)
+    made_labelled = False
+    for m in pattern.finditer(text):
+        number = lineno(text, m.start())
+        line = lines[number - 1]
+        if line.lstrip().startswith("#"):
+            continue
+        near = [line] + ([lines[number - 2]] if number > 1 else [])
+        if any("leak-ok:" in n for n in near):
+            if not any(VOUCH.search(n) for n in near):
+                found.append(f"{path}:{number}: `leak-ok:` without a reason")
+            continue
+        body = statement(text, m.start())
+        if labelled(body):
+            made_labelled = True
+        elif not REMOVED.search(body):
+            found.append(
+                f"{path}:{number}: `{m.group(1)}` without --rm and without the cocreiamo.test labels leaks the container "
+                f"when a timeout or a kill stops the run: {line.strip()[:100]}"
+            )
+    if made_labelled and not signals.search(text):
+        found.append(
+            f"{path}: makes labelled containers but never turns SIGTERM into an exit "
+            f"(a trap that names TERM, test_containers_init, exit_on_signals()), so its cleanup does not run when a timeout stops it"
+        )
+    return found
+
+
+def tracked(root):
+    if os.path.exists(os.path.join(root, ".git")):
+        out = subprocess.run(["git", "ls-files", "-z"], cwd=root, stdout=subprocess.PIPE, check=True).stdout.decode()
+        return [p for p in out.split("\0") if p]
+    found = []
+    for base, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        found += [os.path.relpath(os.path.join(base, n), root) for n in names]
+    return found
+
+
+def main():
+    root = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.getcwd()
+    limits = [p.rstrip("/") for p in sys.argv[2:]]
+    allow_file = os.path.join(root, ".github/container-leaks-allowlist")
+    errors = []
+    entries = []
+    if os.path.isfile(allow_file):
+        for raw in open(allow_file, encoding="utf-8").read().splitlines():
+            if not raw.strip() or raw.startswith("#"):
+                continue
+            path, _, reason = raw.partition(" ")
+            if not reason.strip():
+                errors.append(f"{allow_file}: '{path}' has no reason")
+            entries.append(path)
+    files = tracked(root)
+    hits = {}
+    for rel in files:
+        full = os.path.join(root, rel)
+        if os.path.islink(full) or not os.path.isfile(full):
+            continue
+        if limits and not any(rel == p or rel.startswith(p + "/") for p in limits):
+            continue
+        try:
+            with open(full, encoding="utf-8") as fh:
+                text = fh.read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not (rel.endswith((".sh", ".py")) or SCRIPT.match(text.split("\n", 1)[0])):
+            continue
+        found = violations(rel, text)
+        if found:
+            hits[rel] = found
+    used = set()
+    offenders = []
+    for rel, found in sorted(hits.items()):
+        cover = [e for e in entries if rel == e or (e.endswith("/") and rel.startswith(e))]
+        if cover:
+            used.update(cover)
+        else:
+            offenders += found
+    for e in entries:
+        exists = any(f == e or (e.endswith("/") and f.startswith(e)) for f in files)
+        if not exists:
+            errors.append(f"{allow_file}: '{e}' no longer exists (delete the line)")
+        elif e not in used and not limits:
+            errors.append(f"{allow_file}: '{e}' no longer has a container that leaks (delete the line)")
+    if offenders:
+        print("\n".join(offenders), file=sys.stderr)
+        errors.append(
+            f"container-leaks-check: {len(offenders)} call(s) can leak a container when a run is stopped "
+            "(add --rm, or --label cocreiamo.test=1 --label cocreiamo.test.created=<epoch> with a trap that names TERM; "
+            "or `leak-ok: <why>`, or a line with a reason in .github/container-leaks-allowlist)"
+        )
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        sys.exit(1)
+    print("container-leaks-check: every test container is removed or labelled, and a stop runs its cleanup")
+
+
+main()

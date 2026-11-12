@@ -1,0 +1,7 @@
+id: dotgithub/test/container-leaks.sh
+repo: dotgithub
+invariant: 'A docker run or create is removed (--rm) or carries the cocreiamo.test labels with a TERM trap, and a stale allowlist line is refused; container-leaks-check refuses the bad case.'
+runs:
+- pr-ci
+command: bash tests/container-leaks.sh
+file: tests/container-leaks.sh
