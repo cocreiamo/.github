@@ -102,7 +102,7 @@ for c in 'sops -d f | tool' 'sops -d f > /dev/shm/x' 'sops decrypt --output /dev
   'cat docs/kubeconfig-rotation.md' 'cat docs/talosconfig.md' 'cat lib/kubeconfig.sh' \
   'TOKEN=$(gcloud auth print-access-token)' 'curl -H "Authorization: Bearer $(gcloud auth print-access-token)" https://x' 'gcloud auth print-access-token | wc -c' \
   'gcloud auth list' 'gh auth token | wc -c' 'gh auth status' 'gh auth login --with-token < /dev/shm/t' \
-  'git commit -m "docs: rotate the kubeconfig and the talosconfig, never cat ~/.kube/config"' 'echo "kubectl config view --raw prints the client key"' \
+  'git tag -m "docs: rotate the kubeconfig and the talosconfig, never cat ~/.kube/config" v2' 'echo "kubectl config view --raw prints the client key"' \
   'gh pr create --title "fix: refuse sops -d and gh auth token on the screen"' 'git log --grep "sops -d"'; do
   allows "$c"
 done
