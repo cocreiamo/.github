@@ -111,13 +111,13 @@ printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/x"}}' | "$hook" 2> 
 for garbage in 'not json at all' '{"tool_input": ' '' '[1,2]'; do
   code=0
   printf '%s' "$garbage" | "$hook" 2> "$err" || code=$?
-  [ "$code" = 0 ] || { echo "FAIL: unparseable input '$garbage' was blocked" >&2; exit 1; }
-  grep -qF 'claude-pre-bash:' "$err" || { echo "FAIL: unparseable input '$garbage' passed without a note on stderr" >&2; exit 1; }
+  [ "$code" = 0 ] || { echo "FAIL: unparsable input '$garbage' was blocked" >&2; exit 1; }
+  grep -qF 'claude-pre-bash:' "$err" || { echo "FAIL: unparsable input '$garbage' passed without a note on stderr" >&2; exit 1; }
 done
 for garbage in 'broken {"command": "pkill -f foo"' 'broken {"command": "gh run watch 123"'; do
   code=0
   printf '%s' "$garbage" | "$hook" 2> "$err" || code=$?
-  [ "$code" = 2 ] || { echo "FAIL: unparseable input carrying a forbidden command was allowed: $garbage" >&2; exit 1; }
+  [ "$code" = 2 ] || { echo "FAIL: unparsable input carrying a forbidden command was allowed: $garbage" >&2; exit 1; }
 done
 
 # BASH_ENV (nvm on a laptop) costs a bash 250 ms to start whatever it runs: the settings call the hook as env -u BASH_ENV
