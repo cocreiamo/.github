@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Every test of tests/*.sh, found by glob: all of them run, the red ones are listed at the end"
+#MISE sources=["**"]
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+red=()
+for t in tests/*.sh; do
+  echo "== $t"
+  bash "$t" || red+=("$t")
+done
+[ "${#red[@]}" -eq 0 ] || { echo "red: ${red[*]}" >&2; exit 1; }

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="The files: conflict markers, git environment cleared, the lint baseline for secrets, mktemp traps, test containers"
+#MISE sources=["**"]
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+hooks/check-conflict-markers
+shared/scripts/git-env-cleared tests hooks shared/scripts tools
+shared/scripts/lint-baseline secrets
+shared/scripts/mktemp-trap-check
+shared/scripts/container-leaks-check

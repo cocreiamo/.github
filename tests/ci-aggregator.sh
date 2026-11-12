@@ -27,7 +27,7 @@ tmpdir
 sed 's/^  ci:$/  gone:/' .github/workflows/check.yml > "$tmp/no-ci.yml"
 [[ $(problems "$tmp/no-ci.yml") == *"no job ci"* ]] || fail "a workflow without ci was accepted"
 yq '.jobs.ci.needs = ["title"]' .github/workflows/check.yml > "$tmp/missing.yml"
-[[ $(problems "$tmp/missing.yml") == *"ci does not need: lint"* ]] || fail "a job outside ci was accepted"
+[[ $(problems "$tmp/missing.yml") == *"ci does not need: checks"* ]] || fail "a job outside ci was accepted"
 yq '.jobs.ci.if = "github.event_name == '"'pull_request'"'"' .github/workflows/check.yml > "$tmp/no-always.yml"
 [[ $(problems "$tmp/no-always.yml") == *"no always()"* ]] || fail "an aggregator without always() was accepted"
 echo "ci-aggregator ok"

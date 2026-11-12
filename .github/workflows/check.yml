@@ -15,12 +15,16 @@ jobs:
     permissions:
       pull-requests: read
     uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository]  the version under review is the one to run
-  lint:
+  checks:
     runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci"]') }}
     timeout-minutes: 10
+    env:
+      CI_BASE: ${{ github.event.pull_request.base.sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - run: ci-mise-setup
         if: github.repository_visibility != 'public'
@@ -28,70 +32,16 @@ jobs:
         if: github.repository_visibility == 'public'
         with:
           cache: false
-      - run: actionlint -shellcheck="$(mise which shellcheck)"
-      - run: zizmor --offline --min-severity low .github/workflows
-      - run: shared/scripts/workflow-pins-check.py
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - run: shared/scripts/workflow-tools-check.py
-      - run: shared/scripts/workflow-hygiene-check.py
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - run: hooks/check-conflict-markers
-      - run: bash tests/conflict-markers.sh
-      - run: bash tests/pr-title.sh
-      - run: bash tests/light-jobs.sh
-      - run: bash tests/public-runners.sh
-      - run: bash tests/commons-release.sh
-      - run: bash tests/ci-aggregator.sh
-      - run: bash tests/merge-queue.sh
-      - run: bash tests/unattributed-commits.sh
-      - run: bash tests/post-merge-revert.sh
-      - run: bash tests/post-merge-retry.sh
-      - run: bash tests/post-merge-green.sh
-      - run: bash tests/post-merge-alert.sh
-      - run: bash tests/workflow-actions-read.sh
-      - run: bash tests/shared-rules.sh
-      - run: bash tests/shared-rules-pins.sh
-      - run: bash tests/shared-scripts.sh
-      - run: bash tests/shared-configs.sh
-      - run: bash tests/shared-config-content.sh
-      - run: bash tests/community-files.sh
-      - run: bash tests/claude-telemetry.sh
-      - run: bash tests/eol-check.sh
-      - run: bash tests/hermetic-tools.sh
-      - run: bash tests/post-merge-skip.sh
-      - run: bash tests/worktrees.sh
-      - run: bash tests/pr-template.sh
-      - run: bash tests/pins-consistent.sh
-      - run: bash tests/test-first.sh
-      - run: bash tests/testlib.sh
-      - run: bash tests/commit-identity.sh
-      - run: shared/scripts/git-env-cleared tests hooks shared/scripts tools
-      - run: bash tests/git-env-cleared.sh
-      - run: shared/scripts/lint-baseline secrets
-      - run: bash tests/lint-baseline.sh
-      - run: bash tests/mise-tools.sh
-      - run: bash tests/stalled-prs.sh
-      - run: bash tests/pr-wait.sh
-      - run: bash tests/heavy-lock.sh
-      - run: bash tests/claude-pre-bash.sh
-      - run: bash tests/workflow-pins.sh
-      - run: bash tests/workflow-tools.sh
-      - run: bash tests/workflow-hygiene.sh
-      - run: shared/scripts/mktemp-trap-check
-      - run: bash tests/mktemp-trap.sh
-      - run: shared/scripts/container-leaks-check
-      - run: bash tests/container-leaks.sh
-      - run: bash tests/grep-errors.sh
-      - run: bash tests/fitness-entries.sh
-      - run: bash tests/renovate-config.sh
-      - run: bash tests/renovate-reusable.sh
-      - run: bash tests/post-merge-selftest.sh
-      - run: bash tests/maintenance-reusables.sh
-      - run: bash tests/sync-founder-section.sh
+      - id: parts
+        run: mise run ci -- affected --github-output
+      - if: contains(fromJSON(steps.parts.outputs.parts), 'workflows')
+        run: mise run ci -- workflows
+      - if: contains(fromJSON(steps.parts.outputs.parts), 'lint')
+        run: mise run ci -- lint
+      - if: contains(fromJSON(steps.parts.outputs.parts), 'tests')
+        run: mise run ci -- tests
   ci:
-    needs: [title, lint]
+    needs: [title, checks]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci-light"]') }}
     timeout-minutes: 5

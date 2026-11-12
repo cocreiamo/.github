@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml==6.0.3"]
 # ///
-"""Three hygiene rules for .github/workflows/*.y*ml.
+"""Four hygiene rules for .github/workflows/*.y*ml.
 
 usage: workflow-hygiene-check.py [repository root]   (default: the working directory)
 
@@ -13,6 +13,9 @@ usage: workflow-hygiene-check.py [repository root]   (default: the working direc
    the ref must also name `github.sha` or `github.run_id`.
 3. A `uses: owner/repo@<40-hex>` pin must be a commit, not an annotated tag object (`git/tags/<sha>` answers for a tag
    object; a tag object pin is not a commit and fails to resolve for some consumers). Local `./` actions and non-SHA refs are not read.
+4. In a repository with the mise task `ci` (mise-tasks/ci/_default or [tasks.ci] in mise.toml), a workflow with a `pull_request`
+   trigger runs its checks only as `mise run ci -- <part>`: a `run:` that calls another `mise run`, a script of tests/, hooks/
+   or shared/scripts/, or `bash tests/...` defines a check a second time in YAML, where the pre-push hook and `affected` do not see it.
 
 The kind of a SHA never changes: it is cached in $WORKFLOW_HYGIENE_KINDS (default ~/.cache/workflow-hygiene/<owner>/<repo>/<sha>,
 content `commit` or `tag`), else read from the GitHub API with $GH_TOKEN, $GITHUB_TOKEN or `gh auth token`.
@@ -92,11 +95,36 @@ def groups(doc):
     return found
 
 
-def check_workflow(path):
+CI_CALL = re.compile(r"^mise run ci -- [a-z][a-z0-9-]*(?: (?:[a-z][a-z0-9-]*|--[a-z-]+))*$")
+OTHER_CHECK = re.compile(r"(?:^|[\s;&|(])(?:mise run\b|bash\s+(?:\./)?tests/|(?:\./)?(?:tests|hooks|shared/scripts)/)")
+
+
+def has_ci_task(root):
+    if (root / "mise-tasks" / "ci" / "_default").exists() or (root / "mise-tasks" / "ci").is_file():
+        return True
+    mise = root / "mise.toml"
+    return mise.is_file() and re.search(r"^\[tasks\.(?:ci|\"ci\")\]", mise.read_text(encoding="utf-8"), re.M) is not None
+
+
+def ci_entry_problems(path, doc):
+    triggers = doc.get("on", doc.get(True))
+    if not (triggers == "pull_request" or (isinstance(triggers, list) and "pull_request" in triggers) or (isinstance(triggers, dict) and "pull_request" in triggers)):
+        return []
+    problems = []
+    for name, job in (doc.get("jobs") or {}).items():
+        for step in (job.get("steps") or []) if isinstance(job, dict) else []:
+            for line in str(step.get("run") or "").splitlines():
+                line = line.strip()
+                if line and not CI_CALL.match(line) and OTHER_CHECK.search(line):
+                    problems.append(f"{path}: job {name}: `{line}` runs a check outside `mise run ci -- <part>`: define it as a part (a mise task ci:<part> with sources) and call that")
+    return problems
+
+
+def check_workflow(path, ci_entry=False):
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     triggers = doc.get("on", doc.get(True))
     pushes = triggers == "push" or (isinstance(triggers, list) and "push" in triggers) or (isinstance(triggers, dict) and "push" in triggers)
-    problems = []
+    problems = ci_entry_problems(path, doc) if ci_entry else []
     jobs = doc.get("jobs") or {}
     for name, job in jobs.items():
         if isinstance(job, dict) and "uses" not in job and "timeout-minutes" not in job:
@@ -131,8 +159,9 @@ def check_workflow(path):
 def main(argv):
     root = Path(argv[0]) if argv else Path(".")
     problems = []
+    ci_entry = has_ci_task(root)
     for path in sorted((root / ".github" / "workflows").glob("*.y*ml")):
-        problems += check_workflow(path)
+        problems += check_workflow(path, ci_entry)
     for p in problems:
         print(p, file=sys.stderr)
     return 1 if problems else 0

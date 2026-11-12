@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+#MISE description="The whole check, the same on a laptop and in the CI: mise run ci -- <part>... | affected | prepush | all | check"
+exec "$(dirname "$0")/../../shared/scripts/ci-parts" "$@"
