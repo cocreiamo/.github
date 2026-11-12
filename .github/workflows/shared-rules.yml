@@ -48,6 +48,14 @@ jobs:
             - Facts before claims: a statement about live state (a cause, a count, what a tool is used for, whether something is applied) comes from a primary source read now (a log, an API, a metric, the file at `origin/main`), or is marked unverified. An agent's finding is unverified until spot-checked, and a blocker is spot-checked before it is acted on or reported. A wrong claim is corrected openly in the next reply.
             - Read a red before rerunning it: a rerun is fine only once the cause is named. A check that blocks valid work is fixed at its root with a fixture of that history, never bypassed.
             - Count before launching: agents in flight are counted against the limits before every launch, and a red PR gets an owner in the same reply that finds it.
+            - Spend CI and time only where they buy information:
+              - one PR per repository per block of work, several commits inside; a separate PR only for an incident rollback;
+              - push a branch once, after running locally every check its change touches (not only the fast lint): a CI red that a local run would have found is a wasted round of every required check, the queue update and the post-merge verification;
+              - CI runs what the change touches and the nightly runs everything; the pre-push hook runs only the fast checks;
+              - a `test:` commit before `fix:` is for defects in logic, policies and scripts; a pure value change (a version bump, a config value, a workflow wiring) is proven by the live check after the merge, not by a new test;
+              - before adding a check, search the existing checks and extend the one that already covers the area: two checks of one rule are waste;
+              - waits run beside work: start the wait, prepare the next block meanwhile, never sit idle on CI;
+              - verify a brief's premise from a primary source before delegating, and name the existing checks and tools the agent must read first, so the agent does not come back for another round.
         run: |
           set -euo pipefail
           [ -f CLAUDE.md ] || { echo "::error::no CLAUDE.md in the repository"; exit 1; }
