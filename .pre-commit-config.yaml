@@ -1,0 +1,30 @@
+# One hook manager in every repository (shared/scripts/hooks-check): cheap checks at commit, the CI parts the push touches at push.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: local
+    hooks:
+      - id: conflict-markers
+        name: no conflict markers
+        entry: shared/scripts/conflict-markers
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: commit-identity
+        name: the commit carries a person's identity
+        entry: shared/scripts/commit-identity
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: shared-bundles
+        name: the bundles of shared-rules.yml match shared/ (tools/embed-scripts.sh)
+        entry: tools/embed-scripts.sh
+        language: system
+        pass_filenames: false
+        files: ^(shared/|tools/embed-scripts\.sh$)
+      - id: ci-prepush
+        name: the CI parts this push touches (mise run ci -- prepush)
+        entry: mise run ci -- prepush
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

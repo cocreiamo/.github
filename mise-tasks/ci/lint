@@ -3,8 +3,8 @@
 #MISE sources=["**"]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-hooks/check-conflict-markers
-shared/scripts/git-env-cleared tests hooks shared/scripts tools
+shared/scripts/conflict-markers
+shared/scripts/git-env-cleared tests shared/scripts tools
 shared/scripts/lint-baseline secrets
 shared/scripts/lint-baseline format
 shared/scripts/mktemp-trap-check

@@ -14,13 +14,13 @@ gh = "2.102.1"
 jq = "1.8.2"
 uv = "0.13.7"
 python = "3.13.18"
+"pipx:pre-commit" = "4.6.0"
 
 [settings]
 lockfile = true
 
 [hooks]
-postinstall = "git config core.hooksPath hooks"
-enter = "git config core.hooksPath hooks"
+postinstall = "git config --unset-all core.hooksPath; pre-commit install"
 
 [tasks."wt:gc"]
 description = "Remove the worktrees and branches whose PR is merged and archive stale ones: mise run wt:gc [-- --dry-run]"
