@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. never touch a branch with unpushed commits or with branch.<name>.wtgc-hold true; run after every merge and at session start."
+#MISE description="Remove the clean worktrees and local branches whose PR is merged, unless a process is using the worktree; archive then remove those whose PR is closed unmerged or missing once older than WT_GC_STALE_HOURS (24), and delete such stale remote branches; report the rest. never touch a branch with unpushed commits unless its changes are already on main (archived as a bundle first), or with branch.<name>.wtgc-hold true; run after every merge and at session start."
 # --orphans runs only what needs no git and no gh, in any directory: the Bazel orphan sweep and the expiry of archives; it combines with --dry-run. workstation:trim runs it daily.
 # Archives (<archive dir>/<repo>/<date>/*.{uncommitted.patch,untracked.tgz,bundle}) older than WT_ARCHIVE_DAYS (default 30) are deleted by every run, and the date directories they leave empty.
 # --dry-run (-n) changes nothing: it prints "would remove|archive|delete" for what a real run does.
@@ -8,7 +8,7 @@
 # Bazel: removing a worktree first stops its Bazel server (bazel shutdown run in it; the server pid is killed when bazel is not installed), then removes its output base
 # (<output user root>/<md5 of the workspace path>, 20+ GB each). Output bases whose workspace no longer exists and whose server is not running are swept too.
 # Build outputs are reproducible, so nothing of them is archived. The install base, the disk cache and the repository cache are never touched. WT_GC_BAZEL_ROOT overrides the output user root.
-# Unpushed work: a local branch with a commit reachable from no remote-tracking ref (git rev-list <branch> --not --remotes) is never archived, removed or deleted, whatever its age, and neither is its worktree: it is only reported.
+# Unpushed work: a local branch with a commit reachable from no remote-tracking ref (git rev-list <branch> --not --remotes) is never archived, removed or deleted, whatever its age, and neither is its worktree: it is only reported. The one exception is a branch whose merge into main changes nothing: it is archived as a bundle once stale, then removed.
 # Hold: git config branch.<name>.wtgc-hold true keeps that branch (and its worktree) regardless of PR state and age.
 # Remote branches: deleted only when the PR is closed unmerged, the tip is the one the PR closed with and it is stale; GitHub keeps the PR and its "Restore branch". Without any PR or younger: report-only.
 set -euo pipefail
@@ -36,6 +36,14 @@ repo_name="$(basename "$PWD")"
 
 # Rows "head number STATE oid" of the PRs; the awk filters in the callers keep the fake gh of the tests trivial.
 prs() { gh pr list "$@" --json headRefName,number,state,headRefOid --jq '.[] | "\(.headRefName) \(.number) \(.state) \(.headRefOid)"'; }
+# A branch whose merge into main changes nothing (its changes already landed, e.g. through a squash merge) loses nothing when it is
+# archived as a bundle and removed, even with commits that are on no remote.
+base="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
+content_on_main() {
+  local tree
+  tree="$(git merge-tree --write-tree "$base" "refs/heads/$1" 2>/dev/null)" || return 1
+  [ "$tree" = "$(git rev-parse "$base^{tree}")" ]
+}
 
 # The invoking shell and its parents may sit in the worktree being removed (the monorepo task is run from there on
 # purpose): they are not users of it. Anything else with its working directory or a file open there is.
@@ -222,6 +230,44 @@ while IFS= read -r line; do
   esac
 done < <(git worktree list --porcelain; echo)
 
+archive_stale() {
+  local branch="$1" path="$2" why="$3" idle who files
+  idle="$(idle_seconds "$branch" "$path")"
+  if [ "$idle" -lt $((stale_hours * 3600)) ]; then
+    echo "skip   $branch: $why, last activity $((idle / 3600))h ago, younger than ${stale_hours}h"
+    if [ -n "$path" ]; then report+=("worktree $branch ($path): $why, younger than ${stale_hours}h"); else report+=("branch $branch: $why, younger than ${stale_hours}h"); fi
+    return
+  fi
+  if [ -n "$path" ]; then
+    who="$(holders "$(realpath "$path" 2>/dev/null || echo "$path")")"
+    if [ -n "$who" ]; then
+      echo "skip   $branch: $why, in use by $(tr '\n' ' ' <<<"$who")"
+      return
+    fi
+  fi
+  if [ "$dry" = true ]; then
+    echo "would archive $branch${path:+ ($path)} to $(archive_dir) and remove it ($why)"
+    [ -z "$path" ] || bazel_say "$path"
+    return
+  fi
+  if ! files="$(archive "$branch" "$path")"; then
+    echo "skip   $branch: archive failed, nothing removed"
+    return
+  fi
+  if [ -n "$path" ]; then
+    bazel_stop "$path"
+    if ! git worktree remove --force "$path" 2>/dev/null; then
+      echo "skip   $branch: archived but git could not remove $path (locked?)"
+      return
+    fi
+    [ -z "$bz_base" ] || bazel_purge "$bz_base" "worktree $branch"
+  fi
+  git branch -q -D "$branch"
+  echo "archived $branch ($why) to ${files:-nothing to archive}" | tr '\n' ' '
+  echo
+  echo "removed $branch${path:+ ($path)}"
+}
+
 handle() {
   local branch="$1" path="$2" rows tip n merged_oid who idle files why
   if [ "$(git config --type=bool --get "branch.$branch.wtgc-hold" 2>/dev/null || true)" = true ]; then
@@ -236,50 +282,21 @@ handle() {
   if ! awk '$3 == "MERGED" { f = 1 } END { exit !f }' <<<"$rows"; then
     n="$(awk '$3 == "CLOSED" { print "#" $2; exit }' <<<"$rows")"
     why="no PR"
-    if [ -n "$(git rev-list -1 "refs/heads/$branch" --not --remotes)" ]; then
+    if [ -n "$(git rev-list -1 "refs/heads/$branch" --not --remotes)" ] && ! content_on_main "$branch"; then
       echo "skip   $branch: unpushed work, kept"
       if [ -n "$path" ]; then report+=("worktree $branch ($path): unpushed work, kept"); else report+=("branch $branch: unpushed work, kept"); fi
       return
     fi
     [ -z "$n" ] || why="PR $n closed, not merged"
-    idle="$(idle_seconds "$branch" "$path")"
-    if [ "$idle" -lt $((stale_hours * 3600)) ]; then
-      echo "skip   $branch: $why, last activity $((idle / 3600))h ago, younger than ${stale_hours}h"
-      if [ -n "$path" ]; then report+=("worktree $branch ($path): $why, younger than ${stale_hours}h"); else report+=("branch $branch: $why, younger than ${stale_hours}h"); fi
-      return
-    fi
-    if [ -n "$path" ]; then
-      who="$(holders "$(realpath "$path" 2>/dev/null || echo "$path")")"
-      if [ -n "$who" ]; then
-        echo "skip   $branch: $why, in use by $(tr '\n' ' ' <<<"$who")"
-        return
-      fi
-    fi
-    if [ "$dry" = true ]; then
-      echo "would archive $branch${path:+ ($path)} to $(archive_dir) and remove it ($why)"
-      [ -z "$path" ] || bazel_say "$path"
-      return
-    fi
-    if ! files="$(archive "$branch" "$path")"; then
-      echo "skip   $branch: archive failed, nothing removed"
-      return
-    fi
-    if [ -n "$path" ]; then
-      bazel_stop "$path"
-      if ! git worktree remove --force "$path" 2>/dev/null; then
-        echo "skip   $branch: archived but git could not remove $path (locked?)"
-        return
-      fi
-      [ -z "$bz_base" ] || bazel_purge "$bz_base" "worktree $branch"
-    fi
-    git branch -q -D "$branch"
-    echo "archived $branch ($why) to ${files:-nothing to archive}" | tr '\n' ' '
-    echo
-    echo "removed $branch${path:+ ($path)}"
+    archive_stale "$branch" "$path" "$why"
     return
   fi
   tip="$(git rev-parse "refs/heads/$branch")"
   merged_oid="$(awk '$3 == "MERGED" { print $4 }' <<<"$rows")"
+  if ! grep -qx "$tip" <<<"$merged_oid" && content_on_main "$branch"; then
+    archive_stale "$branch" "$path" "PR merged, later commits already on main"
+    return
+  fi
   if ! grep -qx "$tip" <<<"$merged_oid"; then
     echo "skip   $branch: commits after the merged PR (local tip ${tip:0:9})"
     if [ -n "$path" ]; then report+=("worktree $branch ($path): commits after the merged PR"); else report+=("branch $branch: commits after the merged PR"); fi
