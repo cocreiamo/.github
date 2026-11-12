@@ -1,6 +1,6 @@
 id: dotgithub/test/harbor-retry.sh
 repo: dotgithub
-invariant: "A registry call is retried on a transient failure and a pending scan, never on a verdict or a refusal; harbor-retry refuses the bad case."
+invariant: "A registry call is retried on a transient failure and a pending scan, never on a verdict or a refusal; an image with a critical finding is never pushed; a signed image carries its SBOM and provenance; the shared tests refuse each bad case."
 runs:
   - pr-ci
 command: bash tests/harbor-retry.sh

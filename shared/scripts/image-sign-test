@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# image-sign (shared/scripts, or its vendored copy next to harbor-retry and testlib.sh) with stub cosign and syft: signing makes the keyless
+# signature, the CycloneDX SBOM and both attestations, every call through harbor-retry (a transient failure is retried), and the provenance
+# names the run; verify exits 0 only when the signature and both attestations of the identity are there. No registry.
+# shellcheck disable=SC1091,SC2154,SC2016 # the library is a sibling file; $tmp comes from it; the stubs are script text
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+sign="$here/image-sign"
+command -v jq > /dev/null || fail "jq is not on PATH"
+tmpdir
+export tmp
+export HARBOR_RETRY_BASE_SECONDS=0 GITHUB_REPOSITORY=cocreiamo/x GITHUB_SERVER_URL=https://github.com GITHUB_RUN_ID=42 GITHUB_SHA=abc GITHUB_REF=refs/heads/main
+stub_bin cosign '
+after() { local k=$1; shift; while [ $# -gt 1 ]; do [ "$1" = "$k" ] && { echo "$2"; return; }; shift; done; }
+echo "cosign $*" >> "$tmp/calls"
+if [ "$1" = sign ] && [ ! -e "$tmp/flaked" ]; then : > "$tmp/flaked"; echo "connection reset by peer" >&2; exit 1; fi
+case "$1 $*" in
+attest*slsaprovenance1*) cp "$(after --predicate "$@")" "$tmp/provenance.json" ;;
+verify-attestation*) case "$*" in *"${MISSING:-none}"*) exit 1 ;; esac ;;
+esac'
+stub_bin syft 'echo "syft $*" >> "$tmp/calls"; while [ $# -gt 1 ]; do [ "$1" = --file ] && echo "{}" > "$2"; shift; done'
+
+"$sign" registry.cocreiamo.com/cocreiamo/app@sha256:1 //apps/app:push > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "signing failed"; }
+[ "$(grep -c '^cosign sign --yes' "$tmp/calls")" = 2 ] || fail "the transient signature failure was not retried once: $(cat "$tmp/calls")"
+grep -q '^syft .*-o cyclonedx-json' "$tmp/calls" || fail "no SBOM"
+grep -q '^cosign attest --yes --type cyclonedx' "$tmp/calls" || fail "no SBOM attestation"
+grep -q '^cosign attest --yes --type slsaprovenance1' "$tmp/calls" || fail "no provenance attestation"
+[ "$(jq -r .runDetails.builder.id "$tmp/provenance.json")" = https://github.com/cocreiamo/x/actions/runs/42 ] || fail "the provenance does not name the run"
+[ "$(jq -r .buildDefinition.externalParameters.target "$tmp/provenance.json")" = //apps/app:push ] || fail "the provenance does not name the target"
+
+id=https://github.com/cocreiamo/x/.github/workflows/ci.yml@refs/heads/main
+"$sign" verify registry.cocreiamo.com/cocreiamo/app@sha256:1 "$id" || fail "verify refused a signed image with both attestations"
+if MISSING=slsaprovenance1 "$sign" verify registry.cocreiamo.com/cocreiamo/app@sha256:1 "$id"; then fail "verify passed without the provenance"; fi
+if "$sign" > "$tmp/out" 2>&1; then fail "ran without a reference"; fi
+echo "image-sign: ok"

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# conflict-markers (shared/scripts, or its vendored copy named in .github/shared-scripts) on a throwaway repository: a file with git's
+# conflict markers is refused, tracked or not, and named; a clean file and a lone ======= line pass; a directory of
+# .github/conflict-markers-allowlist with a reason is skipped and an allowlist line without a reason is refused.
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/conflict-markers"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "conflict-markers" { print $2 }' "$repo/.github/shared-scripts")"
+[ -x "$check" ] || fail "$check is missing"
+tmpdir
+git_env_clear
+git_repo "$tmp/r"
+cd "$tmp/r"
+G=git
+expect() { # <ok|refuse> <name>
+  local rc=0
+  "$check" "$tmp/r" > "$tmp/out" 2>&1 || rc=$?
+  if { [ "$1" = ok ] && [ "$rc" != 0 ]; } || { [ "$1" = refuse ] && [ "$rc" = 0 ]; }; then
+    cat "$tmp/out" >&2
+    fail "$2: expected $1, got exit $rc"
+  fi
+  echo "ok   $2"
+}
+
+# The markers are built at run time: a literal one at the start of a line here would trip the check on this repository.
+printf 'one\ntwo\n' > clean.txt
+printf 'Title\n%s\nbody\n' '=======' > heading.md
+"$G" add -A
+expect ok "clean file and a lone ======= line"
+printf 'one\n%s ours\ntwo\n%s\nthree\n%s theirs\n' '<<<<<<<' '=======' '>>>>>>>' > conflicted.txt
+expect refuse "conflict markers in an untracked file"
+grep -q 'conflicted.txt' "$tmp/out" || fail "the file is not named: $(cat "$tmp/out")"
+"$G" add conflicted.txt
+expect refuse "conflict markers in a tracked file"
+"$G" rm -q --cached conflicted.txt
+rm conflicted.txt
+
+mkdir -p vendor/up .github
+printf 'a\n%s x\n' '<<<<<<<' > vendor/up/patch.rej
+printf 'vendor/up/ upstream rejects kept byte for byte\n' > .github/conflict-markers-allowlist
+expect ok "a directory of the allowlist"
+printf 'vendor/up/\n' > .github/conflict-markers-allowlist
+expect refuse "an allowlist line without a reason"
+grep -q 'no reason' "$tmp/out" || fail "the refusal does not say the reason is missing: $(cat "$tmp/out")"
+echo "conflict-markers: ok"
