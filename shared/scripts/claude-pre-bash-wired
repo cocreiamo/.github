@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# claude-pre-bash-wired [repository root]: the committed .claude/settings.json wires claude-pre-bash as a PreToolUse hook on
+# Bash, run repo-relative (through git rev-parse --show-toplevel or $CLAUDE_PROJECT_DIR) and executable. The hook path is the one .github/shared-scripts
+# names for claude-pre-bash, or shared/scripts/claude-pre-bash in the repository with no manifest (cocreiamo/.github itself).
+# Each wiring defect is proven red on a mutated copy of the settings, so a check that accepts anything fails too.
+set -euo pipefail
+root="$(cd "${1:-.}" && pwd)"
+cd "$root"
+hook_path=shared/scripts/claude-pre-bash
+if [ -f .github/shared-scripts ]; then
+  hook_path=$(awk '$1 == "claude-pre-bash" { print $2 }' .github/shared-scripts)
+  [ -n "$hook_path" ] || { echo "FAIL: claude-pre-bash is not listed in .github/shared-scripts" >&2; exit 1; }
+fi
+[ -f .claude/settings.json ] || { echo "FAIL: .claude/settings.json is missing" >&2; exit 1; }
+
+wired() { # <settings.json> <root>
+  local cmd
+  cmd=$(jq -r --arg p "$hook_path" '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]? | select(.type == "command") | .command] | map(select((contains("rev-parse --show-toplevel") or contains("$CLAUDE_PROJECT_DIR")) and contains($p))) | .[0] // empty' "$1")
+  [ -n "$cmd" ] && [ -x "$2/$hook_path" ]
+}
+
+wired .claude/settings.json "$root" || { echo "FAIL: .claude/settings.json does not wire $hook_path as a PreToolUse hook on Bash (or it is not executable)" >&2; exit 1; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/root/$(dirname "$hook_path")"
+cp "$hook_path" "$tmp/root/$hook_path"
+for mutation in 'del(.hooks)' 'del(.hooks.PreToolUse)' '.hooks.PreToolUse[0].matcher = "Read"' \
+  '.hooks.PreToolUse[0].hooks[0].command = "/abs/claude-pre-bash"' '.hooks.PreToolUse[0].hooks[0].command = "true"'; do
+  jq "$mutation" .claude/settings.json > "$tmp/bad.json"
+  if wired "$tmp/bad.json" "$tmp/root"; then echo "FAIL: accepted settings mutated by: $mutation" >&2; exit 1; fi
+done
+chmod -x "$tmp/root/$hook_path"
+if wired .claude/settings.json "$tmp/root"; then echo "FAIL: accepted a hook that is not executable" >&2; exit 1; fi
+echo "claude-pre-bash: wired as a PreToolUse hook on Bash and proven"
