@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# claude-md-duplicates (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture CLAUDE.md files: a
+# paragraph or bullet longer than 120 characters that two repositories both carry outside the shared section is refused, in the
+# direct comparison and against the fingerprints of the other repositories; the shared section, short lines, wrapped copies of
+# a unique rule and the repository's own fingerprints pass.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/claude-md-duplicates"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "claude-md-duplicates" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+long="- Something broken on main: roll back first (revert the PR, or the previous state), debug after; then a blameless note of facts and root cause."
+shared="- Answer first, then act. Every failure report has four parts in plain words: facts, root cause, how the class is closed, what remains open."
+printf '# A\n\n## How to work\n\n%s\n- short rule\n\n## Working with the founder\n\n%s\n' "$long" "$shared" > "$tmp/a.md"
+printf '# B\n\n## Rules\n\n- Something broken on main: roll back first (revert the PR, or the previous\n  state), debug after; then a blameless note of facts and root cause.\n- short rule\n\n## Working with the founder\n\n%s\n' "$shared" > "$tmp/b.md"
+printf '# C\n\n## Rules\n\n- A rule only C has, long enough to count: every component runs one replica unless it cannot work with one, with the reason.\n\n## Working with the founder\n\n%s\n' "$shared" > "$tmp/c.md"
+
+if "$check" compare "a=$tmp/a.md" "b=$tmp/b.md" "c=$tmp/c.md" > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted a rule carried by a and b"; fi
+grep -qF "a, b: - Something broken on main" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not name the repositories and the rule"; }
+grep -qF "Answer first" "$tmp/out" && fail "the shared section counted as a duplicate"
+grep -qF "short rule" "$tmp/out" && fail "a short line counted as a duplicate"
+"$check" compare "a=$tmp/a.md" "c=$tmp/c.md" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused two files with no common rule"; }
+
+"$check" fingerprints "a=$tmp/a.md" "c=$tmp/c.md" > "$tmp/prints"
+grep -qE '^a [0-9a-f]{64}$' "$tmp/prints" || fail "the fingerprints are not '<repository> <sha256>' lines: $(cat "$tmp/prints")"
+if "$check" check b "$tmp/b.md" "$tmp/prints" > "$tmp/out" 2>&1; then fail "b accepted a rule a already carries"; fi
+grep -qF "also in a" "$tmp/out" || { cat "$tmp/out" >&2; fail "the check does not name the other repository"; }
+"$check" check a "$tmp/a.md" "$tmp/prints" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "a was refused for its own fingerprints"; }
+"$check" check c "$tmp/c.md" "$tmp/prints" > /dev/null 2>&1 || fail "c was refused for its own fingerprints"
+echo "claude-md-duplicates: ok"
