@@ -65,7 +65,8 @@ for suffix in j2 jinja jinja2 tmpl tpl erb mustache; do
   printf '#!/usr/bin/env bash\n{%% if x %%}\necho $1\n{%% endif %%}\n' | add "ansible/files/run.sh.$suffix"
   printf '#!/usr/bin/env python3\nimport {{ module }}\n' | add "ansible/files/tool.py.$suffix"
   ok shell; ok python
-  [ -z "$(cd "$tmp/r" && "$check" --list shell | grep "\.$suffix$" || true)" ] || fail "--list shell names a .$suffix template"
+  listed="$(cd "$tmp/r" && "$check" --list shell | { grep "\.$suffix$" || [ $? -eq 1 ]; })"
+  [ -z "$listed" ] || fail "--list shell names a .$suffix template"
 done
 fresh; printf '#!/usr/bin/env bash\necho $1\n' | add ansible/files/run.sh.j2x
 bad "a shebang file whose suffix only looks like a template" shell ansible/files/run.sh.j2x

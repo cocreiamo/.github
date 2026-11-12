@@ -17,7 +17,7 @@ clears='local-env-vars|git_env_clear|hermetic-git\.sh'
 
 declare -A vendored=()
 if [ -f .github/shared-scripts ]; then
-  while read -r _ path _; do [ -z "${path:-}" ] || vendored["$path"]=1; done < <(grep -vE '^[[:space:]]*(#|$)' .github/shared-scripts)
+  while read -r _ path _; do [ -z "${path:-}" ] || vendored["$path"]=1; done < <(awk '$1 !~ /^#/ && NF' .github/shared-scripts)
 fi
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -32,12 +32,13 @@ while IFS= read -r -d '' f; do
   f=${f#./}
   [ -f "$f" ] && [ ! -L "$f" ] || continue
   [ -z "${vendored[$f]:-}" ] || continue
+  [ -r "$f" ] || { echo "git-env-cleared: $f is not readable" >&2; status=1; continue; }
   case "$f" in
   *.sh) ;;
   *) head -n 1 "$f" 2>/dev/null | grep -aqE '^#!.*(bash|/sh|dash|env +(-S +)?sh)( |$)' || continue ;;
   esac
   scanned=$((scanned + 1))
-  code=$(grep -aEv '^[[:space:]]*#' "$f" || true)
+  code=$(grep -aEv '^[[:space:]]*#' "$f" || [ $? -eq 1 ])
   grep -qE "$creates" <<<"$code" || continue
   grep -qE "$clears" <<<"$code" && continue
   grep -qE '^[[:space:]]*#[[:space:]]*git-env-cleared: allow +[^[:space:]]' "$f" && continue

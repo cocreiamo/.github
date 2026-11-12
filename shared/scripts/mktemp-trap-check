@@ -30,13 +30,14 @@ if [ -e .git ]; then files() { git ls-files -z; }; else files() { find . -type f
 offenders=()
 while IFS= read -r -d '' f; do
   [ -f "$f" ] && [ ! -L "$f" ] || continue
+  [ -r "$f" ] || { echo "mktemp-trap-check: $f is not readable" >&2; bad=1; continue; }
   head -c 200 "$f" 2> /dev/null | head -n 1 | grep -qE '^#!.*(bash|/sh|env sh|zsh)' || case "$f" in *.sh) ;; *) continue ;; esac
   grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mkte[m]p([[:space:]]|$|\))' | grep -qvE 'mkte[m]p[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
   [ -z "${allowed[$f]:-}" ] || continue
   skip=0
   for p in "${prefixes[@]}"; do case "$f" in "$p"*) skip=1 ;; esac; done
   [ "$skip" = 0 ] || continue
-  trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || true)"
+  trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || [ $? -eq 1 ])"
   if [ -n "$trap_lines" ]; then
     grep -qE '\brm\b|cleanup|rmdir' <<< "$trap_lines" && continue
     grep -qE '(^|[;&[:space:]])rm[[:space:]]+-' "$f" && continue

@@ -21,7 +21,15 @@ scan() {
   ' "$@"
 }
 
-mapfile -t files < <(git ls-files mise-tasks lib tests .github/workflows ':!tests/ci-docker/bad' ':!mise-tasks/test/docker-mounts' | xargs grep -lI docker 2>/dev/null || true)
+# The tracked files that mention docker, from as many grep runs as the argument limit needs; a grep that fails (exit 2: an unreadable file) fails the check instead of
+# counting as a file without a mention. The list goes through a file because an error inside a process substitution is lost.
+list="$(mktemp)"
+trap 'rm -f "$list"' EXIT
+# shellcheck disable=SC2016 # the script is bash -c's, expanded there
+git ls-files -z mise-tasks lib tests .github/workflows ':!tests/ci-docker/bad' ':!mise-tasks/test/docker-mounts' |
+  while IFS= read -r -d '' f; do [ ! -e "$f" ] || printf '%s\0' "$f"; done |
+  xargs -0 -r -- bash -c 'grep -lIZ docker "$@"; rc=$?; [ "$rc" -le 1 ] || exit 255' grep-files > "$list"
+mapfile -d '' -t files < "$list"
 if [ "${#files[@]}" -gt 0 ] && hits=$(scan "${files[@]}") && [ -n "$hits" ]; then
   echo "docker run/create bind-mounts a local path in a script the CI runs:" >&2
   echo "$hits" >&2

@@ -57,7 +57,8 @@ vcs init -q "$real/r"
 ( . "$lib"
   export GIT_DIR="$real/r/.git" GIT_WORK_TREE="$real/r" GIT_INDEX_FILE="$real/r/.git/index" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.abbrev GIT_CONFIG_VALUE_0=12
   git_env_clear
-  [ -z "$(env | grep -E '^GIT_(DIR|WORK_TREE|INDEX_FILE|CONFIG_COUNT)=' || true)" ] ) || fail "git_env_clear left a local git variable set"
+  left="$(env | grep -E '^GIT_(DIR|WORK_TREE|INDEX_FILE|CONFIG_COUNT)=' || [ $? -eq 1 ])"
+  [ -z "$left" ] ) || fail "git_env_clear left a local git variable set"
 ( . "$lib"; export GIT_AUTHOR_NAME=keep; git_env_clear; [ "${GIT_AUTHOR_NAME:-}" = keep ] ) || fail "git_env_clear must not unset what is not a local variable"
 
 # git_repo <dir>: a repository on main with a test identity and no signing, set in its own config only

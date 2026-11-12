@@ -80,6 +80,7 @@ jobs:
       - run: bash tests/workflow-hygiene.sh
       - run: shared/scripts/mktemp-trap-check
       - run: bash tests/mktemp-trap.sh
+      - run: bash tests/grep-errors.sh
       - run: bash tests/fitness-entries.sh
       - run: bash tests/renovate-config.sh
       - run: bash tests/renovate-reusable.sh

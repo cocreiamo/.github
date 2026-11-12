@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 founder=francesco.bilotta@cocreiamo.com
 [ -f .github/SECURITY.md ] || fail ".github/SECURITY.md is missing"
 grep -qF "$founder" .github/SECURITY.md || fail "SECURITY.md does not name $founder"
-others=$(grep -ohE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' .github/SECURITY.md .github/ISSUE_TEMPLATE/* | sort -u | grep -vxF "$founder" || true)
+others=$(grep -ohE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' .github/SECURITY.md .github/ISSUE_TEMPLATE/* | sort -u | grep -vxF "$founder" || [ $? -eq 1 ])
 [ -z "$others" ] || fail "an address other than $founder: $others"
 [ -f .github/ISSUE_TEMPLATE/config.yml ] || fail ".github/ISSUE_TEMPLATE/config.yml is missing"
 count=0

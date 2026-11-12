@@ -118,7 +118,7 @@ holders() {
       # A process can exit between the scan and this read; the redirection error is the shell's, so the group takes the 2>.
       cmd="$({ tr '\0' ' ' < "$proc_root/$pid/cmdline" | cut -c1-60; } 2>/dev/null || true)"
       echo "pid $pid ($cmd)"
-    done < <(awk -F'\t' -v d="$dir" '$2 == d || index($2, d "/") == 1 { print $1 }' "$holders_file" | sort -u | grep -vx "${bpid:-0}" || true)
+    done < <(awk -F'\t' -v d="$dir" '$2 == d || index($2, d "/") == 1 { print $1 }' "$holders_file" | sort -u | grep -vx "${bpid:-0}" || [ $? -eq 1 ])
   elif command -v lsof > /dev/null; then
     lsof -Fp +D "$dir" 2>/dev/null | sed -n 's/^p/pid /p' | sort -u
   else
