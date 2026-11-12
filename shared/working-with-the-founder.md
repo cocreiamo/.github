@@ -20,5 +20,9 @@ This section has one canonical copy: `shared/working-with-the-founder.md` in coc
   - CI runs what the change touches and the nightly runs everything; the pre-push hook runs only the fast checks;
   - a `test:` commit before `fix:` is for defects in logic, policies and scripts; a pure value change (a version bump, a config value, a workflow wiring) is proven by the live check after the merge, not by a new test;
   - before adding a check, search the existing checks and extend the one that already covers the area: two checks of one rule are waste;
+  - verify once per batch, not per change: batch the changes, run each check once at the end of the batch and bisect only when it is red; the full pre-push run happens once per batch, by one agent;
+  - a fix's red proof reuses what already exists (the previous build, the old binary, the failing check itself), never an extra build;
+  - a base that another branch is integrating is frozen; agents on one integration work in sequence on its branch, not on topic branches merged afterwards;
+  - build directories and caches persist between runs;
   - waits run beside work: start the wait, prepare the next block meanwhile, never sit idle on CI;
   - verify a brief's premise from a primary source before delegating, and name the existing checks and tools the agent must read first, so the agent does not come back for another round.
