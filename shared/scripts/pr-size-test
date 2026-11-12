@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# pr-size (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture numstats: a PR over the budget
+# without the founder's label is refused; the label large-pr and a platform/* integration branch (a platform/final PR over the
+# limit) pass with a warning; binary files, lock files, vendored copies and the reasoned globs of .github/pr-size-ignore are not
+# counted; an ignore line without a reason is refused.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/pr-size"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "pr-size" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github"; printf '%b' "$1" > "$tmp/numstat"; }
+run() { (cd "$tmp/r" && "$check" --numstat "$tmp/numstat" "$@") > "$tmp/out" 2>&1; }
+refused() { # <what> <text> [args]
+  local what=$1 text=$2; shift 2
+  if run "$@"; then cat "$tmp/out" >&2; fail "accepted $what"; fi
+  grep -qF -- "$text" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $what without saying '$text'"; }
+}
+accepted() { # <what> <text> [args]
+  local what=$1 text=$2; shift 2
+  run "$@" || { cat "$tmp/out" >&2; fail "refused $what"; }
+  grep -qF -- "$text" "$tmp/out" || { cat "$tmp/out" >&2; fail "accepted $what without saying '$text'"; }
+}
+
+fixture '300\t50\tlib/a.py\n40\t10\tlib/b.py\n'
+accepted "a PR of 400 lines" "400 changed lines, within the budget of 400"
+
+fixture '300\t60\tlib/a.py\n40\t10\tlib/b.py\n'
+refused "a PR of 410 lines" "410 changed lines, over the budget of 400"
+refused "a PR of 410 lines with another label" "ask the founder" --labels "bug,docs"
+refused "a PR of 410 lines from another branch" "split the PR" --branch feat/platform-x
+accepted "a PR of 410 lines with the founder's label" "::warning" --labels "docs, large-pr"
+accepted "a platform/final PR over the limit" "allowed by the integration branch platform/final" --branch platform/final
+PR_SIZE_BRANCH=platform/final accepted "the branch from the environment" "warning only"
+accepted "a smaller budget" "within the budget of 500" --budget 500
+refused "a budget that is not a number" "not a number" --budget lots
+
+fixture '-\t-\timg/logo.png\n900\t900\tmise.lock\n900\t0\tweb/package-lock.json\n800\t0\tlib/vendored.sh\n700\t0\tdocs/gen/big.md\n10\t0\tlib/a.py\n'
+printf 'wt-gc lib/vendored.sh\n' > "$tmp/r/.github/shared-scripts"
+printf 'docs/gen/* generated from config/ by mise run docs:generate\n' > "$tmp/r/.github/pr-size-ignore"
+accepted "binary, lock, vendored and ignored files" "10 changed lines, within the budget of 400 (5 file(s) not counted)"
+
+printf 'docs/gen/*\n' > "$tmp/r/.github/pr-size-ignore"
+refused "an ignore line without a reason" "has no reason"
+
+echo "pr-size: ok"
