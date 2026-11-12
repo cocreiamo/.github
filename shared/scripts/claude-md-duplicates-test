@@ -28,4 +28,8 @@ if "$check" check b "$tmp/b.md" "$tmp/prints" > "$tmp/out" 2>&1; then fail "b ac
 grep -qF "also in a" "$tmp/out" || { cat "$tmp/out" >&2; fail "the check does not name the other repository"; }
 "$check" check a "$tmp/a.md" "$tmp/prints" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "a was refused for its own fingerprints"; }
 "$check" check c "$tmp/c.md" "$tmp/prints" > /dev/null 2>&1 || fail "c was refused for its own fingerprints"
+printf '# D\n\n## Rules\n\n%s\n\n## Working with the founder\n\n%s\n' "$shared" "$shared" > "$tmp/d.md"
+if "$check" check d "$tmp/d.md" "$tmp/prints" > "$tmp/out" 2>&1; then fail "accepted a rule that repeats the shared section"; fi
+grep -qF "repeats the shared section" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not say it repeats the shared section"; }
+if "$check" compare "d=$tmp/d.md" > "$tmp/out" 2>&1; then fail "compare accepted a rule that repeats the shared section"; fi
 echo "claude-md-duplicates: ok"

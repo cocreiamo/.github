@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""claude-md-duplicates: a rule lives in one CLAUDE.md, or in the shared section, never copied into two repositories.
+
+A unit is a paragraph or a bullet (with its wrapped continuation lines), whitespace collapsed; units of 120 characters or
+fewer, headings, tables and the section `## Working with the founder` do not count, and a unit outside that section that
+repeats one of its units is refused (the shared rule already applies).
+
+  claude-md-duplicates compare <repo>=<CLAUDE.md>...      refuses a unit carried by two of the files
+  claude-md-duplicates fingerprints <repo>=<CLAUDE.md>...  prints `<repo> <sha256>` per unit (shared/scripts/claude-md-paragraphs)
+  claude-md-duplicates check <repo> <CLAUDE.md> <prints>   refuses a unit whose fingerprint belongs to another repository
+
+A caller's rules / check cannot read the other private repositories, so it runs `check` against the fingerprints this
+repository carries (written by `tools/claude-md-paragraphs` from the four checkouts); `compare` is the whole picture.
+"""
+
+import hashlib
+import re
+import sys
+
+SHARED = "## Working with the founder"
+MIN = 120
+ADVICE = "keep one, or move it to the shared section"
+
+
+def split(text):
+    """The units outside the shared section, and the units of the shared section."""
+    local, shared, cur = [], [], []
+    target = local
+
+    def flush():
+        if cur:
+            unit = re.sub(r"\s+", " ", " ".join(x.strip() for x in cur)).strip()
+            if len(unit) > MIN:
+                target.append(unit)
+            cur.clear()
+
+    for line in text.splitlines():
+        if line.startswith("#"):
+            flush()
+            if line.startswith("## "):
+                target = shared if line.strip() == SHARED else local
+            continue
+        if not line.strip() or line.lstrip().startswith("|"):
+            flush()
+        elif re.match(r"^\s*([-*]|\d+\.) ", line):
+            flush()
+            cur.append(line)
+        else:
+            cur.append(line)
+    flush()
+    return local, shared
+
+
+def units(text):
+    local, shared = split(text)
+    return [u for u in local if u not in shared]
+
+
+def repeats(text):
+    local, shared = split(text)
+    return [u for u in local if u in shared]
+
+
+def digest(unit):
+    return hashlib.sha256(unit.encode()).hexdigest()
+
+
+def pairs(args, problems=None):
+    out = []
+    for a in args:
+        name, sep, path = a.partition("=")
+        if not sep:
+            sys.exit(f"claude-md-duplicates: want <repo>=<CLAUDE.md>, got {a}")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        out.append((name, units(text)))
+        if problems is not None:
+            problems += [f"{name}: repeats the shared section: {u}" for u in repeats(text)]
+    return out
+
+
+def compare(args):
+    owners, problems = {}, []
+    for name, us in pairs(args, problems):
+        for u in us:
+            owners.setdefault(u, []).append(name)
+    dup = [(sorted(set(n)), u) for u, n in owners.items() if len(set(n)) > 1]
+    problems += [f"{', '.join(names)}: {u}" for names, u in dup]
+    for p in problems:
+        print(f"claude-md-duplicates: {p}", file=sys.stderr)
+    if problems:
+        print(f"claude-md-duplicates: {len(problems)} rule(s) in more than one place: {ADVICE}", file=sys.stderr)
+        return 1
+    print("claude-md-duplicates: no rule is carried by two CLAUDE.md files")
+    return 0
+
+
+def fingerprints(args):
+    for name, us in pairs(args):
+        for u in sorted(set(us)):
+            print(f"{name} {digest(u)}")
+    return 0
+
+
+def check(name, path, prints):
+    others = {}
+    with open(prints, encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2 and not parts[0].startswith("#") and parts[0] != name:
+                others.setdefault(parts[1], set()).add(parts[0])
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    hits = [(u, f"also in {', '.join(sorted(others[digest(u)]))}") for u in units(text) if digest(u) in others]
+    hits += [(u, "repeats the shared section") for u in repeats(text)]
+    for u, why in hits:
+        print(f"claude-md-duplicates: {path}: {why}: {u}", file=sys.stderr)
+    if hits:
+        print(f"claude-md-duplicates: {len(hits)} rule(s) another repository already carries: {ADVICE}", file=sys.stderr)
+        return 1
+    print(f"claude-md-duplicates: {path} carries no rule of another repository")
+    return 0
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[1] == "compare":
+        return compare(argv[2:])
+    if len(argv) >= 3 and argv[1] == "fingerprints":
+        return fingerprints(argv[2:])
+    if len(argv) == 5 and argv[1] == "check":
+        return check(*argv[2:])
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

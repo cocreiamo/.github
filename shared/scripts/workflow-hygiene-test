@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # workflow-hygiene-check.py (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture workflows: a job
 # with no timeout-minutes, a concurrency group of a push-triggered workflow keyed on the ref alone (queued pushes to main
-# cancel each other) and a `uses:` pinned to the SHA of an annotated tag object (not a commit) are refused; the clean forms pass.
+# cancel each other), a `uses:` pinned to the SHA of an annotated tag object (not a commit) and an env value over 100000 bytes
+# (a step cannot start once one variable passes the kernel's 131072) are refused; the clean forms pass.
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 check="$repo/shared/scripts/workflow-hygiene-check.py"
@@ -116,4 +117,13 @@ jobs:
     steps:
       - run: mise run test:x"; has_ci
 accepted "a workflow with no pull_request trigger"
-echo "a job without timeout, a ref-keyed push group, a tag-object pin and a check run outside mise run ci are refused"
+big=$(head -c 75000 /dev/zero | base64 -w0)
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT
+    env:
+      BUNDLE: $big" "acme/tool@$COMMIT")"
+refused "an env value over 100000 bytes (the exec limit of one variable is 131072)" "env BUNDLE is"
+fixture "$(wf "$GOOD_GROUP" "$TIMEOUT
+    env:
+      SMALL: ${big:0:90000}" "acme/tool@$COMMIT")"
+accepted "an env value under the limit"
+echo "a job without timeout, a ref-keyed push group, a tag-object pin, a check run outside mise run ci and an env value too large to exec are refused"

@@ -11,9 +11,9 @@ step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
 tmpdir
 git_env_clear
 
-bundle=$(step "vendored scripts equal the canonical ones" .env.SCRIPTS_BUNDLE)
-[ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored scripts equal the canonical ones' with SCRIPTS_BUNDLE"
 check=$(step "vendored scripts equal the canonical ones" .run)
+bundle=$(awk 'f && /^ *SCRIPTS_BUNDLE$/ { exit } f { sub(/^ +/, ""); print } index($0, "<<\x27SCRIPTS_BUNDLE\x27") { f = 1 }' <<<"$check")
+[ -n "$bundle" ] || fail "$wf has no step 'vendored scripts equal the canonical ones' whose run script carries the here-document SCRIPTS_BUNDLE"
 fetch=$(step "fetch the vendored scripts" .run)
 [ -n "$fetch" ] && [ "$fetch" != null ] || fail "$wf has no step 'fetch the vendored scripts'"
 
@@ -25,7 +25,8 @@ for f in "$scripts"/*; do
 done
 
 # run <dir>: the check as the workflow runs it, in <dir>
-run() { (cd "$1" && SCRIPTS_BUNDLE="$bundle" bash -c "$check") >"$tmp/out" 2>&1; }
+printf '%s\n' "$check" > "$tmp/check.sh"
+run() { (cd "$1" && bash "$tmp/check.sh") >"$tmp/out" 2>&1; }
 mkrepo() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github" "$tmp/repo/tasks"
   cp -p "$scripts/wt-gc" "$tmp/repo/tasks/gc"

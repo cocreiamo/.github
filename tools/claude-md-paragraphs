@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# tools/claude-md-paragraphs <repo>=<checkout>...: rewrites shared/scripts/claude-md-paragraphs, the fingerprints of the rules each
+# repository's CLAUDE.md carries outside the shared section, from local checkouts (a caller's rules / check cannot read the other
+# private repositories, so it compares its CLAUDE.md with these). Refuses when two of the files already share a rule.
+# Run it whenever a repository's CLAUDE.md changes a rule, then tools/embed-scripts.sh.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[ $# -gt 0 ] || { echo "usage: tools/claude-md-paragraphs <repo>=<checkout>..." >&2; exit 2; }
+args=()
+for a in "$@"; do args+=("${a%%=*}=${a#*=}/CLAUDE.md"); done
+shared/scripts/claude-md-duplicates compare "${args[@]}"
+{
+  echo "# <repository> <sha256 of a rule of its CLAUDE.md outside the shared section>: written by tools/claude-md-paragraphs"
+  shared/scripts/claude-md-duplicates fingerprints "${args[@]}"
+} > shared/scripts/claude-md-paragraphs

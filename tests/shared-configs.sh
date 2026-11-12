@@ -12,9 +12,9 @@ step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
 tmpdir
 
 [ -d "$configs" ] || fail "$configs does not exist"
-bundle=$(step "vendored configs equal the canonical ones" .env.CONFIGS_BUNDLE)
-[ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored configs equal the canonical ones' with CONFIGS_BUNDLE"
 check=$(step "vendored configs equal the canonical ones" .run)
+bundle=$(awk 'f && /^ *CONFIGS_BUNDLE$/ { exit } f { sub(/^ +/, ""); print } index($0, "<<\x27CONFIGS_BUNDLE\x27") { f = 1 }' <<<"$check")
+[ -n "$bundle" ] || fail "$wf has no step 'vendored configs equal the canonical ones' whose run script carries the here-document CONFIGS_BUNDLE"
 fetch=$(step "fetch the vendored scripts" .run)
 sparse=$(yq -N '.jobs.check.steps[] | select(.uses == "actions/checkout*") | .with."sparse-checkout"' "$wf")
 grep -qx '.github/shared-configs' <<<"$sparse" || fail "the sparse checkout does not include .github/shared-configs"
@@ -28,7 +28,8 @@ for name in gitignore .editorconfig .yamllint.yaml ruff.toml .shellcheckrc .gitl
   [ -s "$configs/$name" ] || fail "$configs/$name is missing or empty"
 done
 
-run() { (cd "$1" && CONFIGS_BUNDLE="$bundle" bash -c "$check") >"$tmp/out" 2>&1; }
+printf '%s\n' "$check" > "$tmp/check.sh"
+run() { (cd "$1" && bash "$tmp/check.sh") >"$tmp/out" 2>&1; }
 mkrepo() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github" "$tmp/repo/deep/er"
   cp "$configs/gitignore" "$tmp/repo/.gitignore"
