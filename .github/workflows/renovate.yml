@@ -68,6 +68,7 @@ jobs:
           permission-workflows: write
           permission-statuses: read
           permission-checks: read
+          permission-vulnerability-alerts: read
       - name: extra environment
         env:
           EXTRA_ENV: ${{ inputs.extra-env }}
