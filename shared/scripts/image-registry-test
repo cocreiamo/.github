@@ -13,7 +13,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 G=git
-fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r"; (cd "$tmp/r" && "$G" init -q); }
+fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r/.github"; (cd "$tmp/r" && "$G" init -q); }
 put() { mkdir -p "$(dirname "$tmp/r/$1")"; printf '%s\n' "$2" > "$tmp/r/$1"; (cd "$tmp/r" && "$G" add "$1"); }
 refused() { # <path> <content>
   fixture; put "$1" "$2"
@@ -28,7 +28,7 @@ accepted_tree() { (cd "$tmp/r" && "$check" .) > "$tmp/out" 2>&1 || { cat "$tmp/o
   refused lib/a.py 'subprocess.run(["docker", "run", "--rm", "-i", "--network", net, "alpine:3.22", "true"])'
   refused lib/b.py 'CURL = "curlimages/curl:8.22.0"'
   refused tools/c.sh 'docker run --rm --network host -e A=b busybox true'
-  refused ci/d.yml 'image: grafana/alloy@sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30'
+  refused tools/d.yml 'image: grafana/alloy@sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30'
   refused lib/e.py 'IMAGE = "docker.io/grafana/alloy:v1.20.0"'
   refused tools/f.sh 'docker run --rm ghcr.io/cloudnative-pg/postgresql:18.1 true'
   refused tools/g.sh 'docker run --rm registry.k8s.io/pause:3.10 true'
@@ -62,10 +62,14 @@ docker run --rm ghcr.io/actions/actions-runner:2.338.2 true'
 put lib/ok.py 'ALLOY = "registry.cocreiamo.com/dockerhub/grafana/alloy:v1.20.0"
 subprocess.run(["docker", "run", "--rm", "--network", f"container:{name}", CURL, "-s"])
 TIMEOUT = "10:30"'
+put tools/t.sh.j2 'docker run --rm {{ image }} true'
 put tests/x/bad/pull.sh 'docker run --rm busybox true'
 put docs/readme.md 'image: node:24'
 put vendor/up/run.sh 'docker run --rm busybox true'
-printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist" 2> /dev/null || { mkdir -p "$tmp/r/.github"; printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist"; }
+printf 'tools\nlib\nci\nvendor\n.github/workflows\ndocs\n' > "$tmp/r/.github/image-registry-paths"
+put other/outside.sh 'docker run --rm busybox true'
+mkdir -p "$tmp/r/.github"
+printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist"
 accepted_tree "pulls through Harbor, words, a URL, a vouched line, a fixture, a document and an allowlisted directory"
 
 printf 'vendor/up/\n' > "$tmp/r/.github/image-registry-allowlist"
