@@ -1,0 +1,7 @@
+id: dotgithub/test/python-isolated.sh
+repo: dotgithub
+invariant: 'Every python call in a shell script, a workflow or a mise task runs isolated (-I, -P or uv run --script); python-isolated-check refuses the bad case.'
+runs:
+- pr-ci
+command: bash tests/python-isolated.sh
+file: tests/python-isolated.sh

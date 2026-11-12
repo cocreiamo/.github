@@ -1,6 +1,6 @@
 id: dotgithub/test/mktemp-trap.sh
 repo: dotgithub
-invariant: 'A shell script that calls mktemp installs an EXIT trap that removes what it made; mktemp-trap-check refuses the bad case.'
+invariant: 'A shell script that calls mktemp installs an EXIT trap that removes what it made, and a Python mkdtemp is removed on every exit; mktemp-trap-check refuses the bad case.'
 runs:
 - pr-ci
 command: bash tests/mktemp-trap.sh

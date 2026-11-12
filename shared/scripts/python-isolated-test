@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# python-isolated-check (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture trees: a python or
+# python3 call in a shell script, a workflow or a mise task without -I (or -P) puts the working directory or the script's
+# directory first on sys.path, so a planted json.py runs on `import json`; it is refused. `python3 -I`, `python3 -P`,
+# `uv run --script`, a python word that is an argument, a comment, a test fixture and a line marked
+# `# python-isolated: allow <reason>` pass.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/python-isolated-check"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "python-isolated-check" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r/tools" "$tmp/r/.github/workflows" "$tmp/r/mise-tasks/test"; }
+sh() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$tmp/r/$1"; }
+refused() { # <what> <text in the refusal>
+  if "$check" "$tmp/r" > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted $1"; fi
+  grep -qF "$2" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $1 without saying '$2'"; }
+}
+accepted() { "$check" "$tmp/r" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+fixture
+sh tools/a.sh "python3 -c 'import json'"
+refused "python3 -c" "tools/a.sh:2"
+
+fixture
+sh tools/b 'x=$(python3 lib/x.py)'
+refused "a python3 call in a command substitution" "tools/b:2"
+
+fixture
+sh tools/c 'FOO=1 PYTHONPATH=lib python -m unittest discover'
+refused "python after variable assignments" "tools/c:2"
+
+fixture
+sh tools/d 'uv run --no-project --with pyyaml==6.0.3 python3 tools/x.py'
+refused "uv run ... python3 without -I" "tools/d:2"
+
+fixture
+sh tools/e 'cd lib && timeout 60 python3.13 x.py | tee out'
+refused "python3.13 behind timeout" "tools/e:2"
+
+fixture
+printf 'on: push\njobs:\n  j:\n    steps:\n      - run: python3 tools/x.py\n' > "$tmp/r/.github/workflows/w.yml"
+refused "a workflow step" ".github/workflows/w.yml:5"
+
+fixture
+printf '[tasks.x]\nrun = "python3 tools/x.py"\n' > "$tmp/r/mise.toml"
+refused "a mise task" "mise.toml:2"
+grep -qF "1 call" "$tmp/out" || fail "the offenders are not counted: $(cat "$tmp/out")"
+
+fixture
+sh tools/ok.sh "python3 -I -c 'import json'
+python3 -Ic 'print(1)'
+PYTHONPATH=\"\$PWD/lib\" python3 -P -m unittest x_test
+uv run --script tools/x.py
+uv run --no-project --with pyyaml==6.0.3 python3 -I tools/x.py
+exec python3 -I tools/y.py \"\$@\"
+bad 'a python script' python lib/bad.py
+echo python3 is pinned
+# python3 tools/x.py in a comment
+python3 tools/legacy.py # python-isolated: allow the vendored upstream build reads its own modules"
+printf 'jobs:\n  j:\n    steps:\n      - shell: python3 {0}\n        run: print(1)\n' > "$tmp/r/.github/workflows/w.yml"
+mkdir -p "$tmp/r/tests/x/bad"
+sh tests/x/bad/leak.sh 'python3 x.py'
+printf 'python3 x.py\n' > "$tmp/r/notes.md"
+accepted "the isolated calls, an argument, a comment, a fixture, a document and an allowed line"
+
+fixture
+sh tools/f 'python3 x.py # python-isolated: allow'
+refused "an allow marker without a reason" "reason"
+
+echo "python-isolated-check: ok"
