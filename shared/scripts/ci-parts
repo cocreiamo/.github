@@ -7,7 +7,8 @@ usage: ci-parts [--base REF] <word>...
   affected [--json] [--github-output]
                       print the parts the change since the base needs, one per line (a JSON array with --json;
                       `parts=<json>` appended to $GITHUB_OUTPUT with --github-output, for `fromJSON` conditions of a workflow)
-  prepush             run the affected parts: what the pre-push hook runs, so a push never carries less than the CI checks
+  prepush             run the affected parts: what the pre-push hook runs, so a push never carries less than the CI checks;
+                      a clean tree that already passed them (the run before `git push`) is not run again, CI_PARTS_FORCE=1 runs it anyway
   all                 run every part
   check               refuse a repository that breaks the convention (below)
 
@@ -190,8 +191,17 @@ def main(argv):
         ref = base(ref_arg)
         found = affected(runnable, ref)
         print(f"ci prepush: {' '.join(found) or 'nothing'} (since {ref[:12] if ref else 'no base: every part'})", flush=True)
+        marker = Path(git("rev-parse", "--git-path", "ci-prepush-passed").stdout.strip())
+        clean = git("status", "--porcelain").stdout.strip() == "" and not os.environ.get("CI_PARTS_FORCE")
+        state = f"{git('rev-parse', 'HEAD^{tree}').stdout.strip()} {ref} {' '.join(found)}"
+        if clean and marker.is_file() and marker.read_text() == state:
+            print("ci prepush: this tree already passed these parts, not run again")
+            return 0
+        marker.unlink(missing_ok=True)
         for name in found:
             run_part(name, parts, other)
+        if clean:
+            marker.write_text(state)
         return 0
     for name in sorted(runnable) if word == "all" else argv:
         run_part(name, parts, other)

@@ -94,6 +94,16 @@ got=$(CI_BASE="$base" mise run ci -- affected 2>/dev/null | tr '\n' ' '); want "
 CI_BASE="$base" mise run ci -- prepush > /dev/null 2>&1 || fail "prepush failed"
 [ "$(tr '\n' ' ' < "$MARK")" = "render " ] || fail "prepush ran '$(tr '\n' ' ' < "$MARK")', want only render"
 : > "$MARK"
+CI_BASE="$base" mise run ci -- prepush 2>&1 | grep -q 'already passed' || fail "a second prepush of the same clean tree ran the parts again"
+[ ! -s "$MARK" ] || fail "a second prepush of the same clean tree ran '$(cat "$MARK")'"
+CI_PARTS_FORCE=1 CI_BASE="$base" mise run ci -- prepush > /dev/null 2>&1 || fail "a forced prepush failed"
+[ "$(tr '\n' ' ' < "$MARK")" = "render " ] || fail "CI_PARTS_FORCE did not run the parts"
+printf x >> platform/z/f
+: > "$MARK"
+CI_BASE="$base" mise run ci -- prepush > /dev/null 2>&1 || fail "prepush of a dirty tree failed"
+[ "$(tr '\n' ' ' < "$MARK")" = "render " ] || fail "a dirty tree was skipped"
+git checkout -q -- platform/z/f
+: > "$MARK"
 mise run ci -- lint render > /dev/null 2>&1 || fail "named parts failed"
 [ "$(tr '\n' ' ' < "$MARK")" = "lint render " ] || fail "named parts ran '$(tr '\n' ' ' < "$MARK")'"
 if mise run ci -- nosuch > /dev/null 2>&1; then fail "a part that does not exist was accepted"; fi
