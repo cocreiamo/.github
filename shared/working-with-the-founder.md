@@ -15,7 +15,7 @@ This section has one canonical copy: `shared/working-with-the-founder.md` in coc
 - Read a red before rerunning it: a rerun is fine only once the cause is named. A check that blocks valid work is fixed at its root with a fixture of that history, never bypassed.
 - Count before launching: agents in flight are counted against the limits before every launch, and a red PR gets an owner in the same reply that finds it.
 - Spend CI and time only where they buy information:
-  - one PR per repository per block of work, several commits inside; a separate PR only for an incident rollback;
+  - one PR per repository per block of work, several commits inside; a separate PR only for an incident rollback; when the founder says a PR may be large, it is large: the whole block goes into that one PR, never split to fit a size habit or a line count;
   - push a branch once, after running locally every check its change touches (not only the fast lint): a CI red that a local run would have found is a wasted round of every required check, the queue update and the post-merge verification;
   - CI runs what the change touches and the nightly runs everything; the pre-push hook runs only the fast checks;
   - a `test:` commit before `fix:` is for defects in logic, policies and scripts; a pure value change (a version bump, a config value, a workflow wiring) is proven by the live check after the merge, not by a new test;
