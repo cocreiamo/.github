@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# pr-rules (shared/scripts, or its vendored copy named in .github/shared-scripts) on throwaway branches: every commit is Conventional or
+# git's own Revert/Reapply subject, the title type is the strongest type of the branch (fix > feat > the rest), and a docs: title
+# touches no code. Each rule is refused on a bad case.
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/pr-rules"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "pr-rules" { print $2 }' "$repo/.github/shared-scripts")"
+tmpdir
+git_repo "$tmp/r"
+cd "$tmp/r"
+G=git
+commit() {
+  mkdir -p "$(dirname "$1")"
+  echo "$2" >>"$1"
+  "$G" add "$1"
+  "$G" commit -q -m "$3"
+}
+commit a 1 "chore: base"
+
+expect() { # expect ok|refuse <name> <title>: the branch checked out is compared with main
+  local want="$1" name="$2" title="$3" rc=0
+  [ -x "$check" ] || fail "$check is missing"
+  "$check" --title "$title" main HEAD >"$tmp/out" 2>&1 || rc=$?
+  if { [ "$want" = ok ] && [ "$rc" != 0 ]; } || { [ "$want" = refuse ] && [ "$rc" = 0 ]; }; then
+    cat "$tmp/out" >&2
+    fail "$name: expected $want, got exit $rc"
+  fi
+}
+branch() {
+  "$G" checkout -q main
+  "$G" checkout -q -b "$1"
+}
+branch not-conventional
+commit a 2 "tweak the thing"
+expect refuse "a commit that is not Conventional" "chore: tweak"
+
+branch fix-renamed
+commit a 3 "test: its test"
+commit a 4 "fix: a bug"
+expect refuse "a fix: branch titled chore:" "chore: tidy"
+expect refuse "a fix: branch titled ci:" "ci: tidy"
+expect refuse "a fix: branch titled feat:" "feat: add"
+expect ok "a fix: branch titled fix:" "fix: a bug"
+expect ok "a scoped fix: title" "fix(x)!: a bug"
+
+branch feat-renamed
+commit a 5 "feat: add"
+expect refuse "a feat: branch titled chore:" "chore: add"
+expect ok "a feat: branch titled feat:" "feat: add"
+expect refuse "a feat: branch titled fix:" "fix: add"
+
+branch rest
+commit a 6 "chore: one"
+commit a 7 "ci: two"
+expect ok "a branch of other types titled chore:" "chore: one"
+expect ok "a branch of other types titled ci:" "ci: two"
+expect refuse "a branch of other types titled fix:" "fix: one"
+expect refuse "a title that is not Conventional" "one"
+
+branch only-tests
+commit a 8 "test: only"
+expect ok "tests titled test:" "test: only"
+expect refuse "tests titled fix:" "fix: later"
+
+branch merges
+commit a 9 "chore: work"
+"$G" checkout -q -b side main
+commit b 1 "Merge-like but side commit that is not Conventional"
+"$G" checkout -q merges
+"$G" merge -q --no-ff side -m "Merge branch side"
+expect refuse "a non-merge commit that is not Conventional, brought by a merge" "chore: work"
+"$G" checkout -q main
+
+branch git-revert
+commit a 10 'Revert "feat: add"'
+expect ok "git's own Revert subject, titled revert:" "revert: feat: add"
+expect refuse "git's own Revert subject of a feat: titled feat:" "feat: add"
+expect refuse "git's own Revert subject of a fix: titled fix:" "fix: add"
+branch git-reapply
+commit a 11 'Reapply "fix: a bug"'
+expect ok "git's own Reapply subject, titled revert:" "revert: fix: a bug"
+branch git-revert-mixed
+commit a 12 'Revert "feat: add"'
+commit a 13 "tweak the thing"
+expect refuse "a git Revert next to a commit that is not Conventional" "revert: feat: add"
+branch revert-lookalikes
+commit a 14 "Revert the thing"
+expect refuse "a Revert subject without the quoted original" "revert: the thing"
+branch revert-lowercase
+commit a 15 'revert "feat: add"'
+expect refuse "a lowercase revert subject" "revert: feat: add"
+branch revert-empty
+commit a 16 'Revert ""'
+expect refuse "a Revert subject quoting nothing" "revert: nothing"
+
+branch docs-only
+commit docs/x.md 1 "docs: words"
+commit deep/docs/y.txt 1 "docs: more"
+expect ok "docs: touching docs/ and *.md" "docs: words"
+
+branch docs-code
+commit docs/x.md 2 "docs: words"
+commit tools/code.sh 1 "chore: code"
+expect refuse "docs: title with code changed" "docs: words"
+expect ok "chore: title with docs and code" "chore: words"
+
+echo "pr-rules ok"
