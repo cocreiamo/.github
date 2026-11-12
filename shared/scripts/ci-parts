@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""The one CI entry point of a repository: `mise run ci -- <part>...`, and which parts a change needs.
+
+usage: ci-parts [--base REF] <word>...
+
+  <part>...           run each part (`mise run ci:<part>`), stop at the first red one
+  affected [--json] [--github-output]
+                      print the parts the change since the base needs, one per line (a JSON array with --json;
+                      `parts=<json>` appended to $GITHUB_OUTPUT with --github-output, for `fromJSON` conditions of a workflow)
+  prepush             run the affected parts: what the pre-push hook runs, so a push never carries less than the CI checks;
+                      a clean tree that already passed them (the run before `git push`) is not run again, CI_PARTS_FORCE=1 runs it anyway
+  all                 run every part
+  check               refuse a repository that breaks the convention (below)
+
+A part is a mise task `ci:<name>` that declares `sources` (globs relative to the repository root; `**` crosses directories,
+`*` does not, `{a,b}` alternates, a leading `!` excludes). It is affected when a file changed since the base matches a source
+and no exclusion. The base is --base, else $CI_BASE (the CI passes the pull request base), else the merge base with
+origin/main (not in the CI, where a run without CI_BASE is a push or a schedule); with no base every part is affected. The workflow decides which jobs run from
+`affected`, the hook runs `prepush`, a developer runs the part: all three read the same `sources`, there is no second list.
+
+A task `ci:<name>` without `sources` is either `hide = true` (a helper of a part) or described as `nightly: ...` (a part the
+schedule runs by name: never affected, never in `all`).
+
+`check` refuses: a part whose sources do not match its own file (a change to the part would not run it), a `ci:` task that is
+neither a part, nor hidden, nor nightly, and a `mise run ci -- <part>` in .github/workflows of a part that does not exist.
+
+$CI_PARTS_TASKS (a JSON file in the format of `mise tasks ls --json`) replaces the call to mise: the fixtures of the test use it.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+RESERVED = {"affected", "prepush", "all", "check"}
+ZERO = "0" * 40
+CALL = re.compile(r"mise run ci -- ([a-z][a-z0-9-]*)")
+
+
+def glob_re(pattern):
+    out, i, depth = "", 0, 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            out += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            out += "[^/]"
+            i += 1
+        elif pattern[i] == "{":
+            out += "(?:"
+            depth += 1
+            i += 1
+        elif pattern[i] == "}" and depth:
+            out += ")"
+            depth -= 1
+            i += 1
+        elif pattern[i] == "," and depth:
+            out += "|"
+            i += 1
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return re.compile(out + r"\Z")
+
+
+def matches(sources, path):
+    include = [s for s in sources if not s.startswith("!")]
+    exclude = [s[1:] for s in sources if s.startswith("!")]
+    return any(glob_re(s).match(path) for s in include) and not any(glob_re(s).match(path) for s in exclude)
+
+
+def git(*args, check=True):
+    run = subprocess.run(["git", *args], capture_output=True, text=True)
+    if check and run.returncode != 0:
+        sys.exit(f"ci-parts: git {' '.join(args)}: {run.stderr.strip()}")
+    return run
+
+
+def tasks():
+    override = os.environ.get("CI_PARTS_TASKS")
+    if override:
+        listed = json.loads(Path(override).read_text())
+    else:
+        run = subprocess.run(["mise", "tasks", "ls", "--json"], capture_output=True, text=True)
+        if run.returncode != 0:
+            sys.exit(f"ci-parts: mise tasks ls failed: {run.stderr.strip()}")
+        listed = json.loads(run.stdout)
+    return [t for t in listed if t["name"].startswith("ci:")]
+
+
+def classify(listed):
+    parts, other = {}, {}
+    for t in listed:
+        name = t["name"][3:]
+        if t.get("sources"):
+            parts[name] = t
+        else:
+            other[name] = t
+    return parts, other
+
+
+def nightly(t):
+    return (t.get("description") or "").startswith("nightly:")
+
+
+def base(arg):
+    ref = arg or os.environ.get("CI_BASE") or ""
+    if not ref and os.environ.get("GITHUB_ACTIONS") == "true":
+        return None
+    if not ref:
+        found = git("merge-base", "HEAD", "origin/main", check=False)
+        ref = found.stdout.strip() if found.returncode == 0 else ""
+    if not ref or ref == ZERO or git("cat-file", "-e", f"{ref}^{{commit}}", check=False).returncode != 0:
+        return None
+    return ref
+
+
+def affected(parts, ref):
+    if ref is None:
+        return sorted(parts)
+    changed = git("diff", "--name-only", ref, "HEAD").stdout.splitlines()
+    return sorted(n for n, t in parts.items() if any(matches(t["sources"], c) for c in changed))
+
+
+def run_part(name, parts, other):
+    if name not in parts:
+        if name in other:
+            if not nightly(other[name]):
+                sys.exit(f"ci-parts: ci:{name} is a helper, not a part")
+        else:
+            sys.exit(f"ci-parts: no part {name} (parts: {' '.join(sorted(parts))})")
+    print(f"== ci: {name}", flush=True)
+    rc = subprocess.call(["mise", "run", "--force", f"ci:{name}"])
+    if rc != 0:
+        sys.exit(f"ci-parts: part {name} is red")
+
+
+def check(parts, other):
+    problems = []
+    root = Path(git("rev-parse", "--show-toplevel").stdout.strip())
+    for name, t in sorted(parts.items()):
+        own = os.path.relpath(t.get("source") or t.get("file") or "", root)
+        if own and not own.startswith("..") and not matches(t["sources"], own):
+            problems.append(f"part {name}: its sources do not match its own file {own}: a change to the part would not run it")
+    for name, t in sorted(other.items()):
+        if not t.get("hide") and not nightly(t):
+            problems.append(f"ci:{name} declares no sources and is neither hidden nor nightly: affected can never select it")
+    known = set(parts) | {n for n, t in other.items() if nightly(t)} | RESERVED
+    for wf in sorted((root / ".github" / "workflows").glob("*.y*ml")):
+        for name in sorted(set(CALL.findall(wf.read_text(encoding="utf-8")))):
+            if name not in known:
+                problems.append(f"{wf.relative_to(root)}: `mise run ci -- {name}` names no part")
+    for p in problems:
+        print(p, file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    ref_arg = None
+    if argv[:1] == ["--base"] and len(argv) > 1:
+        ref_arg, argv = argv[1], argv[2:]
+    argv = [a for a in argv if a != "--"]
+    if not argv:
+        sys.exit(__doc__)
+    parts, other = classify(tasks())
+    runnable = {n: t for n, t in parts.items() if not nightly(t)}
+    word, rest = argv[0], argv[1:]
+    if word == "check":
+        return check(parts, other)
+    if word == "affected":
+        found = affected(runnable, base(ref_arg))
+        if "--json" in rest:
+            print(json.dumps(found))
+        elif "--github-output" in rest:
+            line = f"parts={json.dumps(found)}"
+            print(line)
+            if os.environ.get("GITHUB_OUTPUT"):
+                with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+                    out.write(line + "\n")
+        elif found:
+            print("\n".join(found))
+        return 0
+    if word == "prepush":
+        ref = base(ref_arg)
+        found = affected(runnable, ref)
+        print(f"ci prepush: {' '.join(found) or 'nothing'} (since {ref[:12] if ref else 'no base: every part'})", flush=True)
+        marker = Path(git("rev-parse", "--git-path", "ci-prepush-passed").stdout.strip())
+        clean = git("status", "--porcelain").stdout.strip() == "" and not os.environ.get("CI_PARTS_FORCE")
+        state = f"{git('rev-parse', 'HEAD^{tree}').stdout.strip()} {ref} {' '.join(found)}"
+        if clean and marker.is_file() and marker.read_text() == state:
+            print("ci prepush: this tree already passed these parts, not run again")
+            return 0
+        marker.unlink(missing_ok=True)
+        for name in found:
+            run_part(name, parts, other)
+        if clean:
+            marker.write_text(state)
+        return 0
+    for name in sorted(runnable) if word == "all" else argv:
+        run_part(name, parts, other)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

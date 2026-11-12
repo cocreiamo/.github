@@ -1,0 +1,7 @@
+id: dotgithub/hook/pre-push
+repo: dotgithub
+invariant: git hook pre-push
+runs:
+- local
+command: hooks/pre-push
+file: hooks/pre-push

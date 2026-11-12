@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="The workflows: actionlint, zizmor, the pins of reusable workflows, the tools a step calls, the hygiene rules and the parts the workflows name"
+#MISE sources=[".github/workflows/**", ".github/actionlint.yaml", "shared/scripts/{workflow-*,hermetic_tools.py,ci-parts}", "mise.toml", "mise-tasks/ci/{_default,workflows}"]
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+actionlint -shellcheck="$(mise which shellcheck)"
+zizmor --offline --min-severity low .github/workflows
+shared/scripts/workflow-pins-check.py
+shared/scripts/workflow-tools-check.py
+shared/scripts/workflow-hygiene-check.py
+shared/scripts/ci-parts check
