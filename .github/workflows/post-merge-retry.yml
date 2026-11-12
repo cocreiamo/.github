@@ -10,7 +10,8 @@
 #       uses: cocreiamo/.github/.github/workflows/post-merge-retry.yml@<sha>
 #       with: {run-id: "${{ github.event.workflow_run.id }}"}
 # The caller's post-merge job passes `retry: true` to post-merge-revert.yml: its first attempt only alerts, the attempt this workflow starts decides. A failure here fails
-# the job, and the alert of the first attempt stays open.
+# the job, and the alert of the first attempt stays open; with alert: true (secret app-private-key, the caller's variable CLAUDE_CODE_PR_APP_ID
+# and issues: write) the failure also raises «main is red: retry failed» through post-merge-alert.yml.
 name: post-merge-retry
 on:
   workflow_call:
@@ -21,6 +22,13 @@ on:
       dry-run:
         type: boolean
         default: false
+      alert:
+        description: "raise «main is red: retry failed» when the repeat fails"
+        type: boolean
+        default: false
+    secrets:
+      app-private-key:
+        required: false
 permissions: {}
 jobs:
   retry:
@@ -70,3 +78,15 @@ jobs:
             if __name__ == "__main__":
                 sys.exit(main(os.environ))
         run: python3 -I -c "$SCRIPT"
+  alert:
+    needs: [retry]
+    if: ${{ always() && inputs.alert && needs.retry.result == 'failure' }}
+    permissions:
+      actions: read
+      issues: write
+    uses: cocreiamo/.github/.github/workflows/post-merge-alert.yml@21d09a0af4d1212f650aac3bb9e3233e9c656263 # main
+    with:
+      failed: "retry"
+      app-id: ${{ vars.CLAUDE_CODE_PR_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.app-private-key }}

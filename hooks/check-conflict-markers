@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-exec "$(dirname "$0")/../shared/scripts/conflict-markers" "${1:-$(dirname "$0")/..}"
