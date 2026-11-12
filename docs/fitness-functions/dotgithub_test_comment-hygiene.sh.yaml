@@ -1,6 +1,6 @@
 id: dotgithub/test/comment-hygiene.sh
 repo: dotgithub
-invariant: 'An added comment never cites a decision record, an issue or a pull request, never tells history and never keeps commented-out code; comment-hygiene refuses the bad case.'
+invariant: "An added comment never cites a decision record, an issue or a pull request, never tells history and never keeps commented-out code; comment-hygiene refuses the bad case."
 runs:
   - pr-ci
 command: bash tests/comment-hygiene.sh

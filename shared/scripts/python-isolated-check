@@ -153,7 +153,9 @@ def main(argv):
                 if in_run is not None:
                     if in_run in line:
                         in_run = None
-                elif start.group(1) and not re.search(re.escape("]" if start.group(1) == "[" else start.group(1)) + r"\s*$", line[start.end() :]):
+                elif start.group(1) and not re.search(
+                    re.escape("]" if start.group(1) == "[" else start.group(1)) + r"\s*$", line[start.end() :]
+                ):
                     in_run = "]" if start.group(1) == "[" else start.group(1)
             if heredoc is not None:
                 if line.strip() == heredoc:

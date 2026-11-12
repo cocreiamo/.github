@@ -30,6 +30,8 @@ check_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -c
 embed .github/workflows/shared-rules.yml '^ +CHECK_BUNDLE: \\|-$' "$check_bundle"
 pins_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts pins-consistent | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +PINS_BUNDLE: \\|-$' "$pins_bundle"
+rules_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts pr-size comment-hygiene | gzip -n -9 | base64 -w76)
+embed .github/workflows/shared-rules.yml '^ +RULES_BUNDLE: \\|-$' "$rules_bundle"
 config_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/config . | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CONFIGS_BUNDLE: \\|-$' "$config_bundle"
 embed .github/workflows/shared-rules.yml '^ +CANONICAL: \\|-$' "$(cat shared/working-with-the-founder.md)"

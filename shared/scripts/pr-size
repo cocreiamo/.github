@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# pr-size [--numstat <file>] [--branch <head branch>] [--labels <comma list>] [--budget <lines>]: the PR size gate.
+# Counts the changed lines (added plus deleted) of a pull request from a numstat (`added<TAB>deleted<TAB>path` lines, `-` for a
+# binary file; default: `git diff --numstat ${PR_SIZE_BASE:-origin/main}...HEAD`) and refuses a PR over the budget (default
+# PR_SIZE_BUDGET or 400 lines): a small PR is cheap to review and cheap to revert. Not counted: binary files, lock files, the
+# vendored copies declared in .github/shared-scripts and .github/shared-configs, and the globs of .github/pr-size-ignore
+# (`<glob> <reason>` per line, a line without a reason is refused).
+# A PR the founder allows to be large passes with a warning instead: the label `large-pr` (only the founder sets it), or a
+# head branch `platform/*`, the integration branches the founder lets land as one large PR each.
+set -euo pipefail
+numstat="" branch="${PR_SIZE_BRANCH:-}" labels="${PR_SIZE_LABELS:-}" budget="${PR_SIZE_BUDGET:-400}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --numstat) numstat=$2; shift 2 ;;
+  --branch) branch=$2; shift 2 ;;
+  --labels) labels=$2; shift 2 ;;
+  --budget) budget=$2; shift 2 ;;
+  *) echo "pr-size: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+[[ "$budget" =~ ^[0-9]+$ ]] || { echo "pr-size: the budget '$budget' is not a number" >&2; exit 2; }
+
+declare -A skip=()
+for manifest in .github/shared-scripts .github/shared-configs; do
+  [ -f "$manifest" ] || continue
+  while read -r _ path _; do [ -z "${path:-}" ] || skip["$path"]=1; done < <(grep -vE '^[[:space:]]*(#|$)' "$manifest" || [ $? -eq 1 ])
+done
+globs=()
+bad=0
+if [ -f .github/pr-size-ignore ]; then
+  while IFS= read -r line; do
+    case "$line" in "" | "#"*) continue ;; esac
+    glob="${line%% *}"
+    reason="${line#"$glob"}"
+    [ -n "${reason// /}" ] || { echo "pr-size: .github/pr-size-ignore: '$glob' has no reason" >&2; bad=1; }
+    globs+=("$glob")
+  done < .github/pr-size-ignore
+fi
+[ "$bad" = 0 ] || exit 1
+
+if [ -n "$numstat" ]; then
+  stat=$(cat "$numstat")
+else
+  stat=$(git diff --numstat "${PR_SIZE_BASE:-origin/main}...HEAD")
+fi
+
+counted=0 ignored=0
+while IFS=$'\t' read -r added deleted path; do
+  [ -n "${path:-}" ] || continue
+  if [ "$added" = "-" ] || [ -n "${skip[$path]:-}" ]; then ignored=$((ignored + 1)); continue; fi
+  case "${path##*/}" in *.lock | package-lock.json | pnpm-lock.yaml | go.sum) ignored=$((ignored + 1)); continue ;; esac
+  hit=0
+  for g in "${globs[@]}"; do
+    # shellcheck disable=SC2053 # the right side is a glob on purpose
+    [[ "$path" == $g ]] && hit=1 && break
+  done
+  [ "$hit" = 0 ] || { ignored=$((ignored + 1)); continue; }
+  counted=$((counted + added + deleted))
+done <<< "$stat"
+
+if [ "$counted" -le "$budget" ]; then
+  echo "pr-size: $counted changed lines, within the budget of $budget ($ignored file(s) not counted)"
+  exit 0
+fi
+allowed=""
+case ",${labels// /}," in *,large-pr,*) allowed="the label large-pr" ;; esac
+case "$branch" in platform/*) allowed="${allowed:+$allowed and }the integration branch $branch" ;; esac
+if [ -n "$allowed" ]; then
+  echo "::warning title=pr-size::$counted changed lines, over the budget of $budget; allowed by $allowed"
+  echo "pr-size: $counted changed lines, over the budget of $budget, allowed by $allowed (warning only)"
+  exit 0
+fi
+echo "pr-size: $counted changed lines, over the budget of $budget: split the PR, or ask the founder for the label large-pr" >&2
+exit 1

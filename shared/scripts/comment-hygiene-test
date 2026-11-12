@@ -63,7 +63,8 @@ accepted "an untouched old comment in the context of a diff"
 
 # shellcheck disable=SC2046 # one name per word
 unset $(git rev-parse --local-env-vars)
-(cd "$tmp/r" && git init -q && mkdir -p lib && printf '# Cited ADR-0001.\necho x\n' > lib/f.sh && git add lib/f.sh)
+G=git
+(cd "$tmp/r" && "$G" init -q && mkdir -p lib && printf '# Cited ADR-0001.\necho x\n' > lib/f.sh && "$G" add lib/f.sh)
 if (cd "$tmp/r" && "$check" --all) > "$tmp/out" 2>&1; then fail "--all accepted a tree with a reference"; fi
 grep -qF "lib/f.sh:1: reference" "$tmp/out" || { cat "$tmp/out" >&2; fail "--all did not name lib/f.sh:1"; }
 
