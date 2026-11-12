@@ -52,6 +52,7 @@ jobs:
       - run: bash tests/post-merge-alert.sh
       - run: bash tests/workflow-actions-read.sh
       - run: bash tests/shared-rules.sh
+      - run: bash tests/shared-rules-pins.sh
       - run: bash tests/shared-scripts.sh
       - run: bash tests/shared-configs.sh
       - run: bash tests/shared-config-content.sh
