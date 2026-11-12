@@ -64,6 +64,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(200, {"number": n, "mergeable_state": x["state"], "head": x["head"]})
         if p.startswith("/repos/cocreiamo/x/rules/branches/main"):
             return self.reply(200, [{"type": "deletion"}, {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": c} for c in SC["contexts"]]}}])
+        if p == "/repos/cocreiamo/x/commits/main":
+            when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=SC["main_ago"])
+            return self.reply(200, {"sha": sha(999), "commit": {"committer": {"date": when.strftime("%Y-%m-%dT%H:%M:%SZ")}}})
         if "/check-runs" in p:
             s = p.split("/commits/")[1].split("/")[0]
             x = next(x for x in SC["pulls"] if x["head"]["sha"] == s)
@@ -93,7 +96,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 def run(pulls, dry=False, **kw):
     SC.clear()
-    SC.update({"pulls": pulls, "contexts": CTX, "put_code": 202})
+    SC.update({"pulls": pulls, "contexts": CTX, "put_code": 202, "main_ago": 864000})
     SC.update(kw)
     del LOG[:]
     env = {"PATH": os.environ["PATH"], "API_URL": "http://127.0.0.1:%d" % server.server_port, "GH_TOKEN": "tok", "REPO": "cocreiamo/x", "DRY_RUN": "true" if dry else "false"}
@@ -160,7 +163,22 @@ r, calls = run([pull(5, state="blocked", runs="failed"), pull(6)])
 check("an up-to-date red PR does not hold the queue", updated(calls), ["6"])
 
 r, calls = run([pull(5, runs="failed")])
-check("a behind PR whose check failed is left alone", calls, [])
+check("a behind PR whose check failed after main's head is left alone", calls, [])
+
+r, calls = run([pull(5, runs="failed")], main_ago=600)
+check("a behind PR whose check failed before main's head is stale: its branch is updated", updated(calls), ["5"])
+
+r, calls = run([pull(5, runs="failed", fresh=True)], main_ago=600)
+check("a behind PR whose check failed after main's head is left alone", calls, [])
+
+r, calls = run([pull(5, state="clean", runs="failed")], main_ago=600)
+check("an up-to-date red PR is never updated, however old its failure", updated(calls), [])
+
+r, calls = run([pull(5, runs="failed", fresh=True), pull(6, runs="failed")], main_ago=600)
+check("a stale red PR is updated behind a fresh red one", updated(calls), ["6"])
+
+r, calls = run([pull(5, runs="failed")], main_ago=600, dry=True)
+check("a dry run does not update a stale red PR", calls, [])
 
 r, calls = run([pull(5, runs="rerun")])
 check("the latest run of a check counts, not the first failure", updated(calls), ["5"])

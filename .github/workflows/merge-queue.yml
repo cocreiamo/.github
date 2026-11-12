@@ -1,6 +1,8 @@
 # Reusable: the serial merge queue of a repository whose main ruleset requires up-to-date branches. GitHub merges a PR only when its
 # branch contains main, so after each merge every other PR is behind; this workflow brings exactly one of them up to date, the oldest that has
 # auto-merge on and green required checks, and waits for it to merge before it touches the next (a PR already up to date and not red is in flight).
+# A red PR that is behind main and whose failures all finished before the head commit of main was made is a stale verdict (typically a check that
+# compares the branch with main): it is updated like a green one, and the checks re-run on the new head; a failure newer than main's head stays skipped.
 # A PR that is blocked with every required check green for more than two minutes (typically commits GitHub cannot attribute) never holds the queue: it gets the label
 # queue-blocked and one comment with the reason, and the queue moves on to the next one.
 # The required checks are read from the ruleset of main, so the names live in one place (tofu/github of cocreiamo/infrastructure).
@@ -80,18 +82,21 @@ jobs:
                 for r in call("GET", "/repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha))["check_runs"]:
                     if r["name"] in contexts and r["id"] > latest.get(r["name"], {"id": -1})["id"]:
                         latest[r["name"]] = r
-                if any(r["status"] == "completed" and r["conclusion"] not in OK for r in latest.values()):
-                    return "failed", None
+                bad = [r["completed_at"] for r in latest.values() if r["status"] == "completed" and r["conclusion"] not in OK]
+                if bad:
+                    return "failed", max(bad) if all(bad) else None
                 if len(latest) < len(contexts) or any(r["status"] != "completed" for r in latest.values()):
                     return "pending", None
                 done = [r["completed_at"] for r in latest.values() if r.get("completed_at")]
                 return "green", max(done) if done else None
 
+            def stamp(text):
+                return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+
             def just_finished(done):
                 if not done:
                     return False
-                then = datetime.datetime.strptime(done, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
-                return (datetime.datetime.now(datetime.timezone.utc) - then).total_seconds() < GRACE
+                return (datetime.datetime.now(datetime.timezone.utc) - stamp(done)).total_seconds() < GRACE
 
             def why_blocked(repo, n):
                 commits = call("GET", "/repos/%s/pulls/%d/commits?per_page=100" % (repo, n))
@@ -125,6 +130,13 @@ jobs:
                             for c in rule["parameters"]["required_status_checks"]}
                 pulls = [p for p in call("GET", "/repos/%s/pulls?state=open&base=main&per_page=100" % repo) if p.get("auto_merge") and not p.get("draft")]
                 ready = []
+                main_at = []
+
+                def main_moved_after(done):
+                    if not main_at:
+                        main_at.append(stamp(call("GET", "/repos/%s/commits/main" % repo)["commit"]["committer"]["date"]))
+                    return bool(done) and stamp(done) < main_at[0]
+
                 for p in sorted(pulls, key=lambda p: p["number"]):
                     state = call("GET", "/repos/%s/pulls/%d" % (repo, p["number"]))["mergeable_state"]
                     if state == "dirty":
@@ -136,7 +148,9 @@ jobs:
                         continue
                     if LABEL in [l["name"] for l in p.get("labels", [])] and not dry:
                         call("DELETE", "/repos/%s/issues/%d/labels/%s" % (repo, p["number"], LABEL))
-                    if checks == "failed":
+                    if checks == "failed" and state == "behind" and main_moved_after(done):
+                        ready.append(p)
+                    elif checks == "failed":
                         print("#%d: a required check failed, skipped" % p["number"])
                     elif state != "behind":
                         print("#%d: up to date (%s, checks %s), in flight: nothing else is updated" % (p["number"], state, checks))
