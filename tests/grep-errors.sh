@@ -67,7 +67,7 @@ watch="$(printf 'gh pr checks 1 --%s' watch)"
 scan_case gh-watch-interval '' "$watch" 'echo clean' as_repo "$tmp/s/gh-watch-interval.sh"
 scan_case docker-mounts tests/ 'docker run -v /tmp/x:/t img' 'echo clean' as_docker_repo bash mise-tasks/test/docker-mounts
 clean_big=0 scan_case git-env-cleared '' "$(printf '#!/usr/bin/env bash\ngit %s -q d' init)" '#!/usr/bin/env bash' plain "$tmp/s/git-env-cleared" .
-clean_big=0 scan_case mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mktemp)" '#!/usr/bin/env bash' plain "$tmp/s/mktemp-trap-check" .
+clean_big=0 scan_case mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mkt""emp)" '#!/usr/bin/env bash' plain "$tmp/s/mktemp-trap-check" .
 
 # an unreadable file is an error, not a clean file (root reads everything, so the case needs another user)
 if [ "$(id -u)" -ne 0 ]; then
@@ -83,7 +83,7 @@ if [ "$(id -u)" -ne 0 ]; then
   unreadable gh-watch-interval '' "$watch" as_repo "$tmp/s/gh-watch-interval.sh"
   unreadable docker-mounts tests/ 'docker run -v /tmp/x:/t img' as_docker_repo bash mise-tasks/test/docker-mounts
   unreadable git-env-cleared '' "$(printf '#!/usr/bin/env bash\ngit %s -q d' init)" plain "$tmp/s/git-env-cleared" .
-  unreadable mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mktemp)" plain "$tmp/s/mktemp-trap-check" .
+  unreadable mktemp-trap-check '' "$(printf '#!/usr/bin/env bash\ntmp=$(%s -d)' mkt""emp)" plain "$tmp/s/mktemp-trap-check" .
 fi
 
 check="$repo/tools/grep-errors-check"
