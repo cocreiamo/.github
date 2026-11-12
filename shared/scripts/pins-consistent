@@ -21,20 +21,20 @@ def main(argv):
     root = pathlib.Path(argv[1] if len(argv) > 1 else ".")
     refs = {name: {} for name in WATCHED}
     for path in sources(root):
-        for line in path.read_text().splitlines():
+        for number, line in enumerate(path.read_text().splitlines(), 1):
             m = USES.match(line)
             if not m:
                 continue
             name = "/".join(m.group(1).split("/")[:2])
             if name in refs:
-                refs[name].setdefault(m.group(2), set()).add(str(path.relative_to(root)))
+                refs[name].setdefault(m.group(2), []).append(f"{path.relative_to(root)}:{number}")
     bad = False
     for name, by_ref in refs.items():
         if len(by_ref) > 1:
             bad = True
             print(f"{name} is referenced at {len(by_ref)} refs; one is allowed (bump them together):", file=sys.stderr)
             for ref, files in sorted(by_ref.items()):
-                print(f"  {ref}: {', '.join(sorted(files))}", file=sys.stderr)
+                print(f"  {ref}: {', '.join(files)}", file=sys.stderr)
     if bad:
         return 1
     print("pins-consistent: one ref per watched action and for cocreiamo/.github")

@@ -28,6 +28,8 @@ bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C
 embed .github/workflows/shared-rules.yml '^ +SCRIPTS_BUNDLE: \\|-$' "$bundle"
 check_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts commit-identity unattributed_commits.py | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CHECK_BUNDLE: \\|-$' "$check_bundle"
+pins_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts pins-consistent | gzip -n -9 | base64 -w76)
+embed .github/workflows/shared-rules.yml '^ +PINS_BUNDLE: \\|-$' "$pins_bundle"
 config_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/config . | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CONFIGS_BUNDLE: \\|-$' "$config_bundle"
 embed .github/workflows/stalled-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/stalled_prs.py)"

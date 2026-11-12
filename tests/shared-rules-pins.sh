@@ -13,7 +13,8 @@ for p in .github/workflows .github/actions; do
 done
 tmpdir
 mkdir "$tmp/embedded"
-yq -N ".jobs.check.steps[] | select(.name == \"$name\") | .env.PINS_BUNDLE" "$wf" | base64 -d | tar -xzf - -C "$tmp/embedded"
+bundle=$(yq -N ".jobs.check.steps[] | select(.name == \"$name\") | .env.PINS_BUNDLE" "$wf")
+base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
 cmp -s shared/scripts/pins-consistent "$tmp/embedded/pins-consistent" || fail "the bundle embedded in $wf carries a different pins-consistent: run tools/embed-scripts.sh"
 [ -x "$tmp/embedded/pins-consistent" ] || fail "pins-consistent is not executable in the bundle"
 script=$(yq -N ".jobs.check.steps[] | select(.name == \"$name\") | .run" "$wf")
@@ -23,7 +24,7 @@ fixture() { # <file> <sha>
   mkdir -p "$tmp/r/.github/workflows"
   printf 'name: x\non: push\njobs:\n  j:\n    uses: cocreiamo/.github/.github/workflows/pr-title.yml@%s # v1\n' "$2" > "$tmp/r/.github/workflows/$1"
 }
-run() { (cd "$tmp/r" && bash -c "$script") > "$tmp/out" 2>&1; }
+run() { (cd "$tmp/r" && PINS_BUNDLE="$bundle" bash -c "$script") > "$tmp/out" 2>&1; }
 
 fixture a.yml "$A"; fixture b.yml "$A"
 run || { cat "$tmp/out" >&2; fail "refused a repository with one SHA"; }

@@ -1,0 +1,7 @@
+id: dotgithub/test/shared-rules-pins.sh
+repo: dotgithub
+invariant: 'shared-rules.yml fails a repository whose workflows pin cocreiamo/.github at more than one SHA, naming each file:line, so a hand bump never leaves two versions of the shared workflows running side by side.'
+runs:
+- pr-ci
+command: bash tests/shared-rules-pins.sh
+file: tests/shared-rules-pins.sh
