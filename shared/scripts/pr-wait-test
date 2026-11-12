@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mise run pr:wait (shared/scripts/pr-wait.sh, or its vendored copy named in .github/shared-scripts) against a fake gh: the interval is never under 60 s, a rate-limit answer is slept through until the reset
-# (never a failure), a real failure keeps its exit code, and a wait that outlasts the budget exits 75, and a PR whose checks are not registered yet is waited for.
+# (never a failure), a draft or a PR without auto-merge is refused (it would never merge), a real failure keeps its exit code, and a wait that outlasts the budget exits 75, and a PR whose checks are not registered yet is waited for.
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 wait_task="$repo/shared/scripts/pr-wait.sh"
@@ -17,7 +17,8 @@ if [ "$1 $2" = "pr view" ] && [[ "$*" == *headRefName* ]]; then
   [ -z "${HEAD_FAIL:-}" ] || { echo "no pull requests found for branch" >&2; exit 1; }
   jq_expr=""
   while [ $# -gt 0 ]; do [ "$1" != --jq ] || jq_expr="$2"; shift; done
-  echo '{"url":"https://github.com/cocreiamo/x/pull/7","headRefName":"feat/x"}' | jq -r "$jq_expr"
+  armed='{"mergeMethod":"SQUASH"}'; [ -z "${UNARMED:-}" ] || armed=null
+  echo "{\"url\":\"https://github.com/cocreiamo/x/pull/7\",\"headRefName\":\"feat/x\",\"isDraft\":${DRAFT:-false},\"autoMergeRequest\":$armed}" | jq -r "$jq_expr"
   exit 0
 fi
 if [ "$1 $2" = "pr view" ]; then
@@ -63,6 +64,16 @@ grep -qF 'gh pr view 7 --json url,headRefName' <<< "$log" || fail "the guard ask
 name=guardfail; run guardfail HEAD_FAIL=1 -- 7
 [ "$rc" = 0 ] || fail "an unreadable PR header must not stop the wait, got $rc"
 grep -qF 'could not read the PR' "$tmp/guardfail.out" || fail "an unreadable PR header must be said, not skipped silently"
+
+name=draft; run draft DRAFT=true -- 7
+[ "$rc" = 2 ] || fail "a draft PR never merges: refused with exit 2 before any wait, got $rc"
+grep -qF 'draft' "$tmp/draft.out" || fail "the refusal of a draft must say why"
+! grep -qF 'gh pr checks' <<< "$log" || fail "a draft PR must not be watched"
+
+name=unarmed; run unarmed UNARMED=1 -- 7
+[ "$rc" = 2 ] || fail "a PR without auto-merge never merges by itself: refused with exit 2, got $rc"
+grep -qF 'auto-merge' "$tmp/unarmed.out" || fail "the refusal of an unarmed PR must say why"
+! grep -qF 'gh pr checks' <<< "$log" || fail "an unarmed PR must not be watched"
 
 name=slow; run slow PR_WAIT_INTERVAL=5 --
 grep -qF -- '--interval 60' <<< "$log" || fail "an interval under 60 s must be raised to 60"
