@@ -1,0 +1,2 @@
+shared/scripts/docker-mounts the lines are error messages that quote the command, no container is made
+tests/grep-errors.sh the lines are fixture text written into scratch repositories, no container is made
