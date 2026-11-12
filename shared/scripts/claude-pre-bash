@@ -10,7 +10,12 @@
 #   git stash, any subcommand: the stash is one list per clone, shared by every worktree, so two agents pop each other's work;
 #   printing a secret to the transcript: cat/head/tail/... of /run/secrets, *.pem (not cert, chain or pub names) or
 #     *private-key* files, echo/printf of $*TOKEN*/$*SECRET*/$*PASSWORD* (not *_FILE/_PATH/_DIR); a segment that is piped
-#     or redirected is left alone, because that is how a secret reaches a tool without reaching the transcript.
+#     or redirected is left alone, because that is how a secret reaches a tool without reaching the transcript;
+#   printing a credential-bearing file or dumping one with a command: cat/head/... and grep (not -q/-c/-l) of a kubeconfig
+#     (~/.kube/config, $KUBECONFIG, *kubeconfig*, k3s.yaml, rke2.yaml), a talosconfig, an age identity (keys.txt under
+#     sops/age, *.agekey, $SOPS_AGE_KEY_FILE) or an ssh private key (~/.ssh/id_* without .pub); kubectl config view --raw,
+#     talosctl config view/info, sops -d/decrypt without --output, gcloud auth print-access-token/print-identity-token,
+#     gh auth token and gh auth status --show-token (capture them in a variable or pipe them instead).
 # A forbidden word is looked for only where a command starts (after ; && || | ( ` or a line break, past sudo/env/timeout
 # and variable assignments), so a commit message or a grep that merely mentions one passes.
 # Failure mode, on purpose: input that is not the expected JSON (or no jq) is allowed with a note on stderr, because
@@ -65,6 +70,12 @@ slow_interval() { # slow_interval <segment>: succeeds when it carries --interval
 
 secret_word() { # secret_word <word>
   local w=${1//[\"\']/}
+  w=${w,,}
+  case "$w" in
+    *kubeconfig*.md | *kubeconfig*.sh | *kubeconfig*.py | *kubeconfig*.rego | *kubeconfig*.tf | *talosconfig*.md | *talosconfig*.sh | *talosconfig*.py | *talosconfig*.rego | *talosconfig*.tf) return 1 ;;
+    *.ssh/id_*.pub) return 1 ;;
+    *kubeconfig* | *kube/config* | */.kube | */.kube/ | .kube | .kube/ | *k3s.yaml | *rke2.yaml | *talosconfig* | *.talos/config* | *.agekey | *sops/age/keys.txt | *sops_age_key_file* | *.ssh/id_*) return 0 ;;
+  esac
   case "$w" in
     /run/secrets/* | */run/secrets/* | *private-key* | *private_key* | *privatekey*) return 0 ;;
     *cert* | *chain* | *pub* | *ca-bundle*) return 1 ;;
@@ -108,7 +119,17 @@ if [[ $c =~ $loop_re && $c =~ $gh_re ]] && seconds_under_60 "$c"; then
   block "a shell loop that calls gh and sleeps less than 60 s exhausts the shared GitHub API quota. Use 'mise run pr:wait' (60 s polls, sleeps through a rate limit); a loop of your own sleeps 60 s or more."
 fi
 
-reader_re="^[[:space:]]*${W}${P}(cat|bat|head|tail|less|more|tac|nl|xxd|od|strings|base64)([[:space:]]|\$)"
+reader_re="^[[:space:]]*${W}${P}(cat|bat|head|tail|less|more|tac|nl|xxd|od|strings|base64|cut|paste|rev|fold|column)([[:space:]]|\$)"
+grep_re="^[[:space:]]*${W}${P}(grep|egrep|fgrep|rg)([[:space:]]|\$)"
+quiet_re='^(-[A-Za-z]*[qcl][A-Za-z]*|--quiet|--silent|--count|--files-with-matches)$'
+X='(mise[[:space:]]+(exec|x)[[:space:]]+(.*[[:space:]])?--[[:space:]]+)?'
+kubectl_re="^[[:space:]]*${W}${P}${X}kubectl[[:space:]]+(.*[[:space:]])?config[[:space:]]+(.*[[:space:]])?view([[:space:]]|\$)"
+raw_re='[[:space:]]--raw([[:space:]]|=true|$)'
+talos_re="^[[:space:]]*${W}${P}${X}talosctl[[:space:]]+(.*[[:space:]])?config[[:space:]]+(view|info)([[:space:]]|\$)"
+sops_re="^[[:space:]]*${W}${P}${X}sops[[:space:]]+(.*[[:space:]])?(-d|--decrypt|decrypt)([[:space:]]|\$)"
+sops_out_re='[[:space:]](--output|--in-place|-i)([[:space:]=]|$)'
+gcloud_re="^[[:space:]]*${W}${P}${X}gcloud[[:space:]]+(.*[[:space:]])?print-(access|identity)-token([[:space:]]|\$)"
+ghtoken_re="^[[:space:]]*${W}${P}${X}gh[[:space:]]+auth[[:space:]]+(token|status[[:space:]]+(.*[[:space:]])?(-t|--show-token))([[:space:]]|\$)"
 echo_re="^[[:space:]]*${W}(echo|printf)[[:space:]]"
 var_re='\$\{?[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*'
 sub_re='(\$\(|`)[[:space:]]*(cat|<)[[:space:]]+[^)`]*'
@@ -119,6 +140,38 @@ for seg in "${segs[@]}"; do
     for w in $seg; do
       ! secret_word "$w" || block "that would print a secret to the transcript ($w). Pass it on stdin to the tool that needs it, or check it exists with test -s; never display it."
     done
+  fi
+  if [[ $seg =~ $grep_re ]]; then
+    quiet=0 expect_pattern=0 skip_next=0 in_grep=0
+    for w in $seg; do
+      if [ "$in_grep" = 0 ]; then
+        case "$w" in grep | egrep | fgrep | rg | */grep | */egrep | */fgrep | */rg) in_grep=1 expect_pattern=1 ;; esac
+        continue
+      fi
+      if [ "$skip_next" = 1 ]; then skip_next=0; expect_pattern=0; continue; fi
+      [[ $w =~ $quiet_re ]] && quiet=1
+      case "$w" in
+        -e | -f | --regexp | --file) skip_next=1; continue ;;
+        -*) continue ;;
+      esac
+      if [ "$expect_pattern" = 1 ]; then expect_pattern=0; continue; fi
+      [ "$quiet" = 1 ] || ! secret_word "$w" || block "that would print a secret to the transcript ($w). Test for it with grep -q, -c or -l; never display its lines."
+    done
+  fi
+  if [[ $seg =~ $kubectl_re && $seg =~ $raw_re ]]; then
+    block "that would print a secret to the transcript (kubectl config view --raw). Use kubectl config view without --raw, or write it to a file under /dev/shm."
+  fi
+  if [[ $seg =~ $talos_re ]]; then
+    block "that would print a secret to the transcript (talosctl config). Use talosctl config contexts, or pipe it to the tool that needs it."
+  fi
+  if [[ $seg =~ $sops_re && ! $seg =~ $sops_out_re ]]; then
+    block "that would print a secret to the transcript (sops decrypt). Pipe it to the tool that needs it, or write it with --output under /dev/shm."
+  fi
+  if [[ $seg =~ $gcloud_re ]]; then
+    block "that would print a secret to the transcript (a gcloud token). Capture it in a variable (T=\$(gcloud auth print-access-token)) or use it in the command that needs it."
+  fi
+  if [[ $seg =~ $ghtoken_re ]]; then
+    block "that would print a secret to the transcript (the gh token). Pipe it to the tool that needs it; never display it."
   fi
   if [[ $seg =~ $echo_re ]]; then
     t=$seg

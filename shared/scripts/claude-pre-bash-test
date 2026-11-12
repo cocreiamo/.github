@@ -62,6 +62,22 @@ for c in 'cat /run/secrets/db-password' 'head -c 20 /run/secrets/token' 'cat app
   blocks "$secret" "$c"
 done
 
+for c in 'cat ~/.kube/config' 'cat $HOME/.kube/config' 'cat "$KUBECONFIG"' 'cat ${KUBECONFIG}' 'head -n 20 /tmp/k3s-kubeconfig.yaml' 'tail admin.kubeconfig' \
+  'cat /etc/rancher/k3s/k3s.yaml' 'less ~/.kube/config.d/prod' 'base64 -d ~/.kube/config' 'cat kube/config' 'sudo cat /etc/rancher/rke2/rke2.yaml' \
+  'bat talosconfig' 'cat ~/.talos/config' 'strings ./talosconfig' 'cat $TALOSCONFIG' \
+  'cat ~/.config/sops/age/keys.txt' 'cat key.agekey' 'cat "$SOPS_AGE_KEY_FILE"' 'xxd ~/.ssh/id_ed25519' 'cat ~/.ssh/id_rsa' 'cd x && cat $HOME/.ssh/id_ecdsa' \
+  'grep client-key ~/.kube/config' 'grep -n . talosconfig' 'grep -rn key ~/.kube' 'grep -e client-key admin.kubeconfig' 'grep -A2 AGE-SECRET-KEY ~/.config/sops/age/keys.txt'; do
+  blocks "$secret" "$c"
+done
+for c in 'kubectl config view --raw' 'kubectl config view --raw --flatten' 'kubectl --context prod config view --flatten --raw' 'kubectl config view --raw=true' \
+  'echo a; kubectl config view --raw' 'sudo kubectl config view --raw' 'talosctl config info' 'talosctl config view' 'talosctl --talosconfig x config info' \
+  'sops -d secrets/infrastructure.enc.yaml' 'sops decrypt secrets/x.yaml' 'sops --decrypt --extract "[\"a\"]" f' 'cd x && sops -d f' \
+  'mise exec -- sops -d f' 'mise exec -- sops decrypt f' 'mise x -- sops --decrypt f' \
+  'gcloud auth print-access-token' 'gcloud auth print-identity-token --audiences=x' 'gcloud auth application-default print-access-token' \
+  'gh auth token' 'gh auth status --show-token' 'gh auth status -t'; do
+  blocks "$secret" "$c"
+done
+
 for c in 'pgrep -x name' 'pkill -x name' 'pkill -9 -x name' 'pgrep -u root sshd' 'kill 123' 'ps -ef | grep -v grep' \
   'gh pr checks 12' 'gh pr checks 12 --required' 'gh pr view 12 --json state' 'gh run watch --interval 60 123' \
   'gh run watch 123 --interval=120 --exit-status' 'gh pr checks 7 --watch --interval 90' 'gh pr checks 7 -w -i 60' \
@@ -74,6 +90,20 @@ for c in 'pgrep -x name' 'pkill -x name' 'pkill -9 -x name' 'pgrep -u root sshd'
   'git log --oneline -- stash.txt' 'git add stash' 'grep -rn "git stash" docs' 'git branch stash-fix' 'git config alias.stash x' 'git worktree list' \
   'echo "$GH_TOKEN" | gh auth login --with-token' 'echo "${#GH_TOKEN}"' 'echo $TOKEN_FILE' 'echo token' 'echo $PATH' \
   'gh pr create --title "docs: never use pkill -f nor gh run watch"' 'grep -rn "pgrep -f" docs' 'echo "gh pr checks --watch is forbidden"' ''; do
+  allows "$c"
+done
+
+for c in 'sops -d f | tool' 'sops -d f > /dev/shm/x' 'sops decrypt --output /dev/shm/x f' 'sops -d -i f' 'sops -e f' 'sops edit f' 'mise exec -- sops -d f | wc -c' \
+  'kubectl config view' 'kubectl config view --minify' 'kubectl config view --raw | wc -c' 'kubectl config get-contexts' 'kubectl config current-context' \
+  'kubectl --kubeconfig /tmp/x get nodes' 'export KUBECONFIG=/tmp/x' 'echo $KUBECONFIG' 'talosctl config contexts' 'talosctl --talosconfig x get members' \
+  'cat x.pub' 'cat ~/.ssh/id_ed25519.pub' 'ls ~/.ssh' 'ls ~/.kube' 'test -s ~/.kube/config' 'cat id_card.txt' 'ssh-keygen -y -f ~/.ssh/id_ed25519 | head -c 20' \
+  'grep -q client-key ~/.kube/config' 'grep -c server ~/.kube/config' 'grep -l x ~/.kube/config' 'grep -rn kubeconfig docs' 'grep kubeconfig README.md' \
+  'grep -rn talosconfig tofu' 'cat ~/.kube/config | wc -c' 'cat ~/.kube/config > /dev/shm/k' 'cat talosconfig | talosctl validate' 'x=$(cat ~/.kube/config)' \
+  'cat docs/kubeconfig-rotation.md' 'cat docs/talosconfig.md' 'cat lib/kubeconfig.sh' \
+  'TOKEN=$(gcloud auth print-access-token)' 'curl -H "Authorization: Bearer $(gcloud auth print-access-token)" https://x' 'gcloud auth print-access-token | wc -c' \
+  'gcloud auth list' 'gh auth token | wc -c' 'gh auth status' 'gh auth login --with-token < /dev/shm/t' \
+  'git tag -m "docs: rotate the kubeconfig and the talosconfig, never cat ~/.kube/config" v2' 'echo "kubectl config view --raw prints the client key"' \
+  'gh pr create --title "fix: refuse sops -d and gh auth token on the screen"' 'git log --grep "sops -d"'; do
   allows "$c"
 done
 
