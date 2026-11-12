@@ -5,7 +5,7 @@ set -euo pipefail
 . "$(dirname "$0")/../shared/scripts/testlib.sh"
 cd "$(dirname "$0")/.."
 uv_run() { uv run --quiet --no-project --no-config --with pyyaml==6.0.3 "$@"; }
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/shared/scripts" uv_run python3 -m unittest tests/fitness_entries_test.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/shared/scripts:$PWD" uv_run python3 -P -m unittest tests/fitness_entries_test.py
 check() { uv_run python3 -I shared/scripts/fitness_entries.py dotgithub "$PWD" "$@"; }
 check
 tmpdir

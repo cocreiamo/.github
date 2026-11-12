@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""python-isolated-check [repository root]: every python call in a shell script, a workflow or a mise task runs isolated.
+
+`python3 x.py` puts the script's directory, and `python3 -c` or `-m` the working directory, first on sys.path: a file
+planted there (a downloaded archive, a checkout under test) named like a module, json.py, runs on `import json`. A call
+must carry -I (or -P, which keeps PYTHONPATH) or go through `uv run --script`. A python word in command position is
+looked at, outside quoted strings: after a line start, ; & | ( ` $( , the keywords then/do/else/exec/time/!, variable assignments and the
+wrappers env, timeout, nice and uv run. A line may carry `# python-isolated: allow <reason>`. Shebangs are not calls:
+a script run by its shebang reads its own directory, which is this repository's code. Fixtures under tests/*/bad and
+tests/*/good, and the vendored copies listed in .github/shared-scripts, are skipped.
+Prints the offenders as path:line and their count; exits 1 when there is one.
+"""
+
+import pathlib
+import re
+import subprocess
+import sys
+
+PYTHON = re.compile(r"^python(3(\.\d+)?)?$")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+ISOLATING = re.compile(r"^-[A-Za-z]*[IP][A-Za-z]*$")
+ALLOW = re.compile(r"#\s*python-isolated:\s*allow\b(.*)$")
+SPLIT = re.compile(r"\$\(|&&|\|\||[;&|(`]")
+PREFIX = {"then", "do", "else", "exec", "time", "!", "{", "sudo", "nice", "command"}
+UV_VALUE_OPTIONS = {"--with", "--python", "-p", "--project", "--directory", "--group", "--extra", "--env-file", "--index", "--from"}
+RUN_PREFIX = re.compile(r"""^\s*(-\s*)?(run:\s*[|>]?[-+]?\s*|run\s*=\s*(\[\s*)?("{3}|'{3}|"|')?)""")
+
+
+def tracked(root):
+    try:
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+        return [p for p in out.decode().split("\0") if p]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and ".git" not in p.parts]
+
+
+def vendored(root):
+    manifest = root / ".github" / "shared-scripts"
+    if not manifest.is_file():
+        return set()
+    out = set()
+    for line in manifest.read_text().splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and not line.lstrip().startswith("#"):
+            out.add(parts[1])
+    return out
+
+
+def kind(root, rel):
+    if re.match(r"^tests/[^/]+/(bad|good)/", rel):
+        return None
+    if re.match(r"^\.github/workflows/[^/]+\.ya?ml$", rel) or re.match(r"^\.github/actions/.+/action\.ya?ml$", rel):
+        return "yaml"
+    if rel == "mise.toml" or rel.endswith("/mise.toml") or re.match(r"^\.?mise/.+\.toml$", rel) or rel.startswith(".config/mise/"):
+        return "toml"
+    if rel.endswith((".sh", ".bash")):
+        return "shell"
+    try:
+        with open(root / rel, "rb") as f:
+            first = f.readline(200)
+    except OSError:
+        return None
+    if first.startswith(b"#!") and re.search(rb"(bash|/sh|env sh|zsh)\b", first):
+        return "shell"
+    return None
+
+
+def code_only(line):
+    out, quote = [], None
+    for i, c in enumerate(line):
+        if quote:
+            if c == quote:
+                quote = None
+                out.append(c)
+            continue
+        if c in "'\"":
+            quote = c
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;"):
+            break
+        out.append(c)
+    return "".join(out)
+
+
+def segment_offends(segment):
+    words = segment.split()
+    i = 0
+    while i < len(words):
+        w = words[i].lstrip("({")
+        if w in PREFIX or ASSIGNMENT.match(w) or w == "":
+            i += 1
+        elif w == "env":
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or ASSIGNMENT.match(words[i])):
+                i += 1
+        elif w == "timeout":
+            i += 1
+            while i < len(words) and words[i].startswith("-"):
+                i += 1
+            i += 1
+        elif w == "uv" and i + 1 < len(words) and words[i + 1] == "run":
+            i += 2
+            while i < len(words) and words[i].startswith("-"):
+                if words[i] == "--script":
+                    return False
+                i += 2 if words[i] in UV_VALUE_OPTIONS else 1
+        else:
+            break
+    if i >= len(words) or not PYTHON.match(words[i].strip("\"'")):
+        return False
+    for flag in words[i + 1 :]:
+        if not flag.startswith("-") or flag.startswith("--"):
+            return True
+        if ISOLATING.match(flag):
+            return False
+        if re.match(r"^-[A-Za-z]*[cm]$", flag):
+            return True
+    return True
+
+
+def offends(line, file_kind):
+    if file_kind in ("yaml", "toml"):
+        line = RUN_PREFIX.sub("", line, count=1)
+    if file_kind == "toml":
+        line = re.sub(r"""["']\s*,\s*["']""", " ; ", line)
+    code = code_only(line)
+    if not code.strip() or code.lstrip().startswith("#"):
+        return False
+    return any(segment_offends(s) for s in SPLIT.split(code))
+
+
+def main(argv):
+    root = pathlib.Path(argv[1] if len(argv) > 1 else ".").resolve()
+    skip = vendored(root)
+    offenders, problems = [], []
+    for rel in tracked(root):
+        if rel in skip or not (root / rel).is_file() or (root / rel).is_symlink():
+            continue
+        file_kind = kind(root, rel)
+        if file_kind is None:
+            continue
+        try:
+            lines = (root / rel).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            problems.append(f"{rel}: unreadable ({e.__class__.__name__})")
+            continue
+        heredoc = None
+        in_run = None
+        for n, line in enumerate(lines, 1):
+            if file_kind == "toml":
+                start = re.match(r"""^\s*run\s*=\s*(\[|"{3}|'{3})?""", line)
+                if in_run is None and not start:
+                    continue
+                if in_run is not None:
+                    if in_run in line:
+                        in_run = None
+                elif start.group(1) and not re.search(re.escape("]" if start.group(1) == "[" else start.group(1)) + r"\s*$", line[start.end() :]):
+                    in_run = "]" if start.group(1) == "[" else start.group(1)
+            if heredoc is not None:
+                if line.strip() == heredoc:
+                    heredoc = None
+                continue
+            marker = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", line)
+            allow = ALLOW.search(line)
+            if allow:
+                if not allow.group(1).strip():
+                    problems.append(f"{rel}:{n}: python-isolated allow marker without a reason")
+            elif offends(line, file_kind):
+                offenders.append(f"{rel}:{n}: {line.strip()}")
+            if marker and file_kind == "shell":
+                heredoc = marker.group(2)
+    for p in problems:
+        print(f"python-isolated-check: {p}", file=sys.stderr)
+    for o in offenders:
+        print(f"python-isolated-check: {o}", file=sys.stderr)
+    if offenders:
+        print(
+            f"python-isolated-check: {len(offenders)} call(s) of python without -I, -P or uv run --script"
+            " (add -I, or `# python-isolated: allow <reason>` on the line)",
+            file=sys.stderr,
+        )
+    if offenders or problems:
+        return 1
+    print("python-isolated-check: every python call runs isolated")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

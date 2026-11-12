@@ -44,9 +44,14 @@ printf 'on: push\njobs:\n  j:\n    steps:\n      - run: python3 tools/x.py\n' > 
 refused "a workflow step" ".github/workflows/w.yml:5"
 
 fixture
-printf '[tasks.x]\nrun = "python3 tools/x.py"\n' > "$tmp/r/mise.toml"
-refused "a mise task" "mise.toml:2"
-grep -qF "1 call" "$tmp/out" || fail "the offenders are not counted: $(cat "$tmp/out")"
+printf '[tools]\npython = "3.13.18"\n[tasks.x]\nrun = "python3 tools/x.py"\n' > "$tmp/r/mise.toml"
+refused "a mise task" "mise.toml:4"
+grep -qF "1 call" "$tmp/out" || fail "the offenders are not counted, or the python tool pin was taken for a call: $(cat "$tmp/out")"
+
+fixture
+printf '[tasks.y]\nrun = """\necho start\npython3 -c pass\n"""\n[tasks.z]\nrun = ["true", "python3 x.py"]\n' > "$tmp/r/mise.toml"
+refused "a multi-line mise task" "mise.toml:4"
+grep -qF "mise.toml:7" "$tmp/out" || fail "a python call in a run list was accepted: $(cat "$tmp/out")"
 
 fixture
 sh tools/ok.sh "python3 -I -c 'import json'

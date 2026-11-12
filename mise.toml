@@ -12,6 +12,10 @@ node = "24.22.2"
 gh = "2.102.1"
 jq = "1.8.2"
 uv = "0.13.7"
+python = "3.13.18"
+
+[settings]
+lockfile = true
 
 [hooks]
 postinstall = "git config core.hooksPath hooks"

@@ -39,9 +39,9 @@ yq -e '.jobs.mark.permissions."pull-requests" == "write" and .jobs.mark.permissi
   || fail "dirty-prs.yml needs pull-requests and issues write and no contents (the script is embedded, nothing is checked out)"
 yq -e '[.jobs.mark.steps[] | has("uses")] | any | not' "$wf" >/dev/null || fail "dirty-prs.yml checks out and uses nothing: the script is embedded"
 embedded dirty-prs.yml mark "label and comment the pull requests in conflict" shared/scripts/mark_conflicts.py
-(cd shared/scripts && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest mark_conflicts_test)
+(cd shared/scripts && PYTHONPATH="$PWD" PYTHONDONTWRITEBYTECODE=1 python3 -P -m unittest mark_conflicts_test)
 printf '%s\n' "$(cat shared/scripts/mark_conflicts.py)" > "$tmp/mark_conflicts.py"
-(cd shared/scripts && MARK_CONFLICTS_SCRIPT=$tmp/mark_conflicts.py PYTHONDONTWRITEBYTECODE=1 python3 -m unittest mark_conflicts_test)
+(cd shared/scripts && MARK_CONFLICTS_SCRIPT=$tmp/mark_conflicts.py PYTHONPATH="$PWD" PYTHONDONTWRITEBYTECODE=1 python3 -P -m unittest mark_conflicts_test)
 
 # auto-merge-rearm
 common auto-merge-rearm.yml arm

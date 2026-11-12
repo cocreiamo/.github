@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 wf=.github/workflows/stalled-prs.yml
 script=shared/scripts/stalled_prs.py
 fail() { echo "FAIL: $*" >&2; exit 1; }
-(cd shared/scripts && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest stalled_prs_test)
+(cd shared/scripts && PYTHONPATH="$PWD" PYTHONDONTWRITEBYTECODE=1 python3 -P -m unittest stalled_prs_test)
 [ -f "$wf" ] || fail "$wf is missing"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 yq -e '(.on | keys | join(",")) == "workflow_call"' "$wf" >/dev/null || fail "$wf must be reusable only (the schedule belongs to the caller)"
