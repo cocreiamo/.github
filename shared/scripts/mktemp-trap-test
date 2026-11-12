@@ -2,6 +2,7 @@
 # mktemp-trap-check on fixture trees: a shell script that calls mktemp with no EXIT trap that removes what it made is refused (the leaked tmp.* directories
 # that filled a workstation disk), as are an EXIT trap that does not remove anything and an allowlist line without a reason; a script with the trap, one that
 # only names mktemp in a comment or runs `mktemp -u`, a non-shell file and an allowlisted script pass; the offenders are counted and listed.
+# The Python class: tempfile.mkdtemp, mkstemp or NamedTemporaryFile(delete=False) with no removal in a finally block or an atexit handler is refused.
 # shellcheck disable=SC2016 # the fixture bodies are single-quoted on purpose: they are script text, not expanded here
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
@@ -64,5 +65,29 @@ refused "a leak outside an allowlisted directory" "tools/leaky"
 grep -qF "vendor/up" "$tmp/out" && fail "a directory allowlist line did not exclude vendor/up: $(cat "$tmp/out")"
 rm "$tmp/r/tools/leaky"
 accepted "an allowlisted directory"
+
+fixture
+mkdir -p "$tmp/r/py"
+printf 'import tempfile\n\n\ndef work():\n    d = tempfile.mkdtemp()\n    return d\n' > "$tmp/r/py/leaky.py"
+printf '#!/usr/bin/env python3\nfrom tempfile import mkstemp\nfd, path = mkstemp()\n' > "$tmp/r/py/leaky-script"
+printf 'import tempfile\n\nf = tempfile.NamedTemporaryFile(delete=False)\n' > "$tmp/r/py/keep.py"
+refused "a Python mkdtemp with no cleanup" "py/leaky.py"
+grep -qF "py/leaky-script" "$tmp/out" || fail "a python-shebang mkstemp with no cleanup was accepted: $(cat "$tmp/out")"
+grep -qF "py/keep.py" "$tmp/out" || fail "a NamedTemporaryFile(delete=False) with no cleanup was accepted: $(cat "$tmp/out")"
+grep -qF "3 script" "$tmp/out" || fail "the Python offenders are not counted: $(cat "$tmp/out")"
+
+fixture
+mkdir -p "$tmp/r/py"
+printf 'import shutil\nimport tempfile\n\n\ndef work():\n    d = tempfile.mkdtemp()\n    print(d)\n    shutil.rmtree(d)\n' > "$tmp/r/py/no-finally.py"
+refused "a Python mkdtemp removed only on the happy path" "py/no-finally.py"
+
+fixture
+mkdir -p "$tmp/r/py"
+printf 'import shutil\nimport tempfile\n\n\ndef work():\n    d = tempfile.mkdtemp()\n    try:\n        print(d)\n    finally:\n        shutil.rmtree(d, ignore_errors=True)\n' > "$tmp/r/py/finally.py"
+printf 'import atexit\nimport shutil\nimport tempfile\n\nD = tempfile.mkdtemp()\natexit.register(shutil.rmtree, D, True)\n' > "$tmp/r/py/atexit.py"
+printf 'import os\nimport tempfile\n\nfd, p = tempfile.mkstemp()\ntry:\n    os.write(fd, b"x")\nfinally:\n    os.unlink(p)\n' > "$tmp/r/py/unlink.py"
+printf 'import tempfile\n\nwith tempfile.TemporaryDirectory() as d:\n    print(d)\n# tempfile.mkdtemp() in a comment\n' > "$tmp/r/py/context.py"
+printf 'import tempfile\n\nf = tempfile.NamedTemporaryFile()\n' > "$tmp/r/py/auto.py"
+accepted "the Python files that clean up"
 
 echo "mktemp-trap-check: ok"
