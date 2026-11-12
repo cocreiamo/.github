@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# harbor-retry, image-scan and image-sign (shared/scripts, or the vendored copies named in .github/shared-scripts): harbor-retry sorts a
+# registry failure (a scan still pending, a transient network or 5xx error, a verdict, an authentication refusal), retries a transient
+# failure until it passes, waits for a pending scan, never retries a verdict or a refusal, and gives up after its attempts; image-sign and
+# image-scan refuse to run without their arguments. Stub commands, no registry.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+dir="$repo/shared/scripts"
+if [ -f "$repo/.github/shared-scripts" ]; then dir="$repo/$(dirname "$(awk '$1 == "harbor-retry" { print $2 }' "$repo/.github/shared-scripts")")"; fi
+retry="$dir/harbor-retry"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+[ -x "$retry" ] && [ -x "$dir/image-scan" ] && [ -x "$dir/image-sign" ] || fail "harbor-retry, image-scan and image-sign must sit side by side in $dir"
+export HARBOR_SCAN_POLL_SECONDS=0 HARBOR_SCAN_TIMEOUT_SECONDS=3 HARBOR_RETRY_BASE_SECONDS=0 HARBOR_TRANSIENT_ATTEMPTS=3
+
+kind_is() { printf '%s\n' "$2" > "$tmp/f"; [ "$("$retry" --kind "$tmp/f")" = "$1" ] || fail "'$2' sorted as $("$retry" --kind "$tmp/f"), not $1"; }
+kind_is pending 'unexpected status code 412 Precondition Failed'
+kind_is pending 'PROJECTPOLICYVIOLATION: current image without vulnerability scanning cannot be pulled; scan is in "Running" status'
+kind_is verdict 'PROJECTPOLICYVIOLATION: current image with 2 vulnerabilities cannot be pulled due to configured policy'
+kind_is permanent 'unexpected status code 401 Unauthorized'
+kind_is transient 'net/http: TLS handshake timeout'
+kind_is transient 'unexpected status code 503 Service Unavailable'
+kind_is permanent 'manifest unknown'
+
+# flaky <failures> <message>: a command that fails <failures> times with <message>, then succeeds; it counts its calls
+flaky() { printf '#!/usr/bin/env bash\nn=$(( $(cat "%s/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "%s/n"\n[ "$n" -gt %s ] || { echo "%s" >&2; exit 1; }\necho pushed\n' "$tmp" "$tmp" "$1" "$2" > "$tmp/cmd"; chmod +x "$tmp/cmd"; rm -f "$tmp/n"; }
+calls() { cat "$tmp/n"; }
+
+flaky 2 'connection reset by peer'
+"$retry" push "$tmp/cmd" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "two transient failures then success must pass"; }
+[ "$(calls)" = 3 ] || fail "transient: $(calls) calls, not 3"
+
+flaky 5 'connection reset by peer'
+if "$retry" push "$tmp/cmd" > "$tmp/out" 2>&1; then fail "five transient failures passed with three attempts"; fi
+[ "$(calls)" = 3 ] || fail "transient give-up: $(calls) calls, not 3"
+grep -qF "giving up" "$tmp/out" || fail "the give-up does not say so: $(cat "$tmp/out")"
+
+flaky 1 'unexpected status code 412'
+"$retry" push "$tmp/cmd" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "a pending scan then success must pass"; }
+
+flaky 9 'PROJECTPOLICYVIOLATION: current image with 1 vulnerabilities cannot be pulled'
+if "$retry" push "$tmp/cmd" > "$tmp/out" 2>&1; then fail "a verdict passed"; fi
+[ "$(calls)" = 1 ] || fail "a verdict was retried: $(calls) calls"
+
+flaky 9 'unexpected status code 403 Forbidden'
+if "$retry" push "$tmp/cmd" > "$tmp/out" 2>&1; then fail "a refusal passed"; fi
+[ "$(calls)" = 1 ] || fail "a refusal was retried: $(calls) calls"
+
+if "$dir/image-sign" > "$tmp/out" 2>&1; then fail "image-sign ran without a reference"; fi
+if "$dir/image-scan" > "$tmp/out" 2>&1; then fail "image-scan ran without a target"; fi
+echo "harbor-retry: ok"
