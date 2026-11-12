@@ -1,7 +1,7 @@
 id: dotgithub/test/conflict-markers.sh
 repo: dotgithub
-invariant: 'hooks/check-conflict-markers on a throwaway repository: a file with git''s conflict markers is refused, a clean file and a lone ======= line pass.'
+invariant: "hooks/check-conflict-markers on a throwaway repository: a file with git's conflict markers is refused, a clean file and a lone ======= line pass."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/conflict-markers.sh
 file: tests/conflict-markers.sh

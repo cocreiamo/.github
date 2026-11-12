@@ -14,7 +14,7 @@ rm "$tmp/missing/dotgithub_test_pr-title.sh.yaml"
 if check --entries "$tmp/missing" > "$tmp/out" 2>&1; then fail "a check without an entry must be refused"; fi
 grep -qF 'tests/pr-title.sh is a check with no entry' "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal must name the check"; }
 cp -r docs/fitness-functions "$tmp/broken"
-sed -i 's/^- pr-ci$/- weekly/' "$tmp/broken/dotgithub_test_pr-title.sh.yaml"
+sed -i 's/^\( *\)- pr-ci$/\1- weekly/' "$tmp/broken/dotgithub_test_pr-title.sh.yaml"
 if check --entries "$tmp/broken" > "$tmp/out" 2>&1; then fail "an entry outside the schema must be refused"; fi
 grep -qF 'runs must be a list drawn from' "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal must say why"; }
 echo "every check has an entry and an invalid entry is refused"

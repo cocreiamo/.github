@@ -2,6 +2,6 @@ id: dotgithub/test/fitness-entries.sh
 repo: dotgithub
 invariant: Every check of this repository (a tests/*.sh test, a hook) has an entry in docs/fitness-functions/ and every entry validates against the schema of cocreiamo/deploy; the checker is proven on fixtures and on this tree with an entry removed and an entry broken.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/fitness-entries.sh
 file: tests/fitness-entries.sh

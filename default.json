@@ -1,11 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "cocreiamo defaults: every repository extends github>cocreiamo/.github",
-  "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    ":semanticCommits"
-  ],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
   "timezone": "Europe/Rome",
   "dependencyDashboard": true,
   "platformAutomerge": true,

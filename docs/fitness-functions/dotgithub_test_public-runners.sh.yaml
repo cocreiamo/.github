@@ -1,7 +1,7 @@
 id: dotgithub/test/public-runners.sh
 repo: dotgithub
-invariant: 'No job reachable from a trigger other than workflow_call (directly or through a local reusable call) runs on a self-hosted label unless it is the guarded form that is GitHub-hosted in a public repository.'
+invariant: "No job reachable from a trigger other than workflow_call (directly or through a local reusable call) runs on a self-hosted label unless it is the guarded form that is GitHub-hosted in a public repository."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/public-runners.sh
 file: tests/public-runners.sh

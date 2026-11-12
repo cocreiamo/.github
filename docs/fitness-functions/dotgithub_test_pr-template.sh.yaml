@@ -2,6 +2,6 @@ id: dotgithub/test/pr-template.sh
 repo: dotgithub
 invariant: The organization's default pull request template asks what, why, the test proven red and how the class is closed.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/pr-template.sh
 file: tests/pr-template.sh

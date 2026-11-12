@@ -2,6 +2,6 @@ id: dotgithub/test/shared-config-content.sh
 repo: dotgithub
 invariant: The common .gitignore ignores what the four repositories ignored and what the adopted tools generate and hides no tracked file; the linter configs parse and keep every rule a repository enforced.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/shared-config-content.sh
 file: tests/shared-config-content.sh

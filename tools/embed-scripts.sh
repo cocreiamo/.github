@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Writes shared/scripts and shared/config into .github/workflows/shared-rules.yml as the base64 of a gzipped tar (a caller's token cannot
+# Writes shared/scripts and shared/config into .github/workflows/shared-rules.yml (and the founder section, as the text the check holds CLAUDE.md to) as the base64 of a gzipped tar (a caller's token cannot
 # read this private repository's files, so the workflow carries the scripts it compares against), and
 # shared/scripts/stalled_prs.py into .github/workflows/stalled-prs.yml and shared/scripts/mark_conflicts.py into .github/workflows/dirty-prs.yml
 # (the reusable workflows run them from there).
@@ -32,5 +32,6 @@ pins_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf
 embed .github/workflows/shared-rules.yml '^ +PINS_BUNDLE: \\|-$' "$pins_bundle"
 config_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/config . | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CONFIGS_BUNDLE: \\|-$' "$config_bundle"
+embed .github/workflows/shared-rules.yml '^ +CANONICAL: \\|-$' "$(cat shared/working-with-the-founder.md)"
 embed .github/workflows/stalled-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/stalled_prs.py)"
 embed .github/workflows/dirty-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/mark_conflicts.py)"

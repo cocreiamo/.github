@@ -1,7 +1,7 @@
 id: dotgithub/test/merge-queue.sh
 repo: dotgithub
-invariant: 'merge-queue.yml: with the ruleset requiring up-to-date branches, the oldest PR that has auto-merge on and green required checks but is behind main is brought up to date, one at a time; a PR in flight, a red, draft, conflicting or auto-merge-less PR never is, a PR blocked with every required check green is labelled queue-blocked, commented once and skipped instead of holding the queue, and the required checks are read from the ruleset.'
+invariant: "merge-queue.yml: with the ruleset requiring up-to-date branches, the oldest PR that has auto-merge on and green required checks but is behind main is brought up to date, one at a time; a PR in flight, a red, draft, conflicting or auto-merge-less PR never is, a PR blocked with every required check green is labelled queue-blocked, commented once and skipped instead of holding the queue, and the required checks are read from the ruleset."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/merge-queue.sh
 file: tests/merge-queue.sh

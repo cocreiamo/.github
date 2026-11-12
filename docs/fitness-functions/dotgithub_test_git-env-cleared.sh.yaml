@@ -1,7 +1,7 @@
 id: dotgithub/test/git-env-cleared.sh
 repo: dotgithub
-invariant: 'Every own script that creates a git repository (init, worktree add) clears git rev-parse --local-env-vars first, so a hook never lets a test write into the real repository; git-env-cleared refuses the bad case, skips vendored copies and works in every layout.'
+invariant: "Every own script that creates a git repository (init, worktree add) clears git rev-parse --local-env-vars first, so a hook never lets a test write into the real repository; git-env-cleared refuses the bad case, skips vendored copies and works in every layout."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/git-env-cleared.sh
 file: tests/git-env-cleared.sh

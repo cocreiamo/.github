@@ -1,7 +1,7 @@
 id: dotgithub/test/post-merge-revert.sh
 repo: dotgithub
-invariant: 'post-merge-revert.yml: the first red of a streak is the commit reverted (green, cancelled, red, red; the incident replay), the decision (when to only alert, when to skip) and the whole flow against a fake API (which commit to revert, when to only alert, when to skip) and the whole flow against a fake `gh`, including that a dry run changes nothing and that no revert is opened while main is green at its head.'
+invariant: "post-merge-revert.yml: the first red of a streak is the commit reverted (green, cancelled, red, red; the incident replay), the decision (when to only alert, when to skip) and the whole flow against a fake API (which commit to revert, when to only alert, when to skip) and the whole flow against a fake `gh`, including that a dry run changes nothing and that no revert is opened while main is green at its head."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/post-merge-revert.sh
 file: tests/post-merge-revert.sh

@@ -2,6 +2,6 @@ id: dotgithub/test/test-first.sh
 repo: dotgithub
 invariant: The shared test-first check refuses a fix with no earlier test in the branch and ignores the fix commits that a merge of main brings into the branch.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/test-first.sh
 file: tests/test-first.sh

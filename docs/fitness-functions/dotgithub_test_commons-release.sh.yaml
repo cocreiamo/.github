@@ -1,7 +1,7 @@
 id: dotgithub/test/commons-release.sh
 repo: dotgithub
-invariant: 'The commons release is reproducible, ships no test of the scripts, is versioned by the commit title, installs through mise only at its pinned checksum, and commons-sync --check refuses every drift of a consumer (config content, link, executable bit, founder section).'
+invariant: "The commons release is reproducible, ships no test of the scripts, is versioned by the commit title, installs through mise only at its pinned checksum, and commons-sync --check refuses every drift of a consumer (config content, link, executable bit, founder section)."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/commons-release.sh
 file: tests/commons-release.sh

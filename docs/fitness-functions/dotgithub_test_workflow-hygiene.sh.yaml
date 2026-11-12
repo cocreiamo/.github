@@ -1,7 +1,7 @@
 id: dotgithub/test/workflow-hygiene.sh
 repo: dotgithub
-invariant: 'Every non-reusable job declares timeout-minutes, no concurrency group of a push-triggered workflow is keyed on the ref alone, and no pinned action SHA is an annotated tag object; each rule is proven red on a fixture.'
+invariant: "Every non-reusable job declares timeout-minutes, no concurrency group of a push-triggered workflow is keyed on the ref alone, and no pinned action SHA is an annotated tag object; each rule is proven red on a fixture."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/workflow-hygiene.sh
 file: tests/workflow-hygiene.sh
