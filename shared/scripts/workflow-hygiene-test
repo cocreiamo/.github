@@ -84,4 +84,33 @@ jobs:
   call:
     uses: acme/tool/.github/workflows/w.yml@$TAG"
 refused "a reusable workflow pinned to a tag object" "annotated tag object"
-echo "a job without timeout, a ref-keyed push group and a tag-object pin are refused"
+
+# In a repository with the mise task ci, a pull request workflow runs its checks only as `mise run ci -- <part>`.
+ci_wf() { # <run lines of the step>
+  printf 'name: x\non:\n  pull_request:\njobs:\n  j:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - run: |\n%s\n' "$1"
+}
+has_ci() { mkdir -p "$tmp/r/mise-tasks/ci"; : > "$tmp/r/mise-tasks/ci/_default"; }
+fixture "$(ci_wf '          ci-mise-setup
+          mise run ci -- affected --github-output')"; has_ci
+accepted "plumbing and mise run ci -- <part>"
+
+for bad in 'mise run test:lint' 'mise run check' 'mise run ci:lint' 'bash tests/x.sh' 'tests/x.sh' 'shared/scripts/workflow-pins-check.py' 'hooks/check-conflict-markers' 'mise run ci -- lint && mise run test:x' 'mise run ci -- Lint'; do
+  fixture "$(ci_wf "          $bad")"; has_ci
+  refused "a check run as '$bad'" "outside \`mise run ci -- <part>\`"
+done
+
+fixture "$(ci_wf '          bash tests/x.sh')"
+accepted "a check call in a repository with no ci task"
+
+fixture "name: x
+on:
+  schedule:
+    - cron: '0 1 * * *'
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: mise run test:x"; has_ci
+accepted "a workflow with no pull_request trigger"
+echo "a job without timeout, a ref-keyed push group, a tag-object pin and a check run outside mise run ci are refused"
