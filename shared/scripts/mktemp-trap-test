@@ -88,6 +88,15 @@ printf 'import atexit\nimport shutil\nimport tempfile\n\nD = tempfile.mkdtemp()\
 printf 'import os\nimport tempfile\n\nfd, p = tempfile.mkstemp()\ntry:\n    os.write(fd, b"x")\nfinally:\n    os.unlink(p)\n' > "$tmp/r/py/unlink.py"
 printf 'import tempfile\n\nwith tempfile.TemporaryDirectory() as d:\n    print(d)\n# tempfile.mkdtemp() in a comment\n' > "$tmp/r/py/context.py"
 printf 'import tempfile\n\nf = tempfile.NamedTemporaryFile()\n' > "$tmp/r/py/auto.py"
-accepted "the Python files that clean up"
+printf 'import shutil\nimport tempfile\nimport unittest\n\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.d = tempfile.mkdtemp()\n\n    def tearDown(self):\n        shutil.rmtree(self.d)\n' > "$tmp/r/py/teardown_test.py"
+printf 'import shutil\nimport tempfile\nimport unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        d = tempfile.mkdtemp()\n        self.addCleanup(shutil.rmtree, d)\n' > "$tmp/r/py/addcleanup_test.py"
+mkdir -p "$tmp/r/tests/x/bad"
+printf 'import tempfile\n\ntempfile.mkdtemp()\n' > "$tmp/r/tests/x/bad/leak.py"
+accepted "the Python files that clean up, and a bad fixture"
+
+fixture
+mkdir -p "$tmp/r/py"
+printf 'import tempfile\nimport unittest\n\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.d = tempfile.mkdtemp()\n\n    def tearDown(self):\n        print(self.d)\n' > "$tmp/r/py/notorn_test.py"
+refused "a setUp mkdtemp whose tearDown removes nothing" "py/notorn_test.py"
 
 echo "mktemp-trap-check: ok"
