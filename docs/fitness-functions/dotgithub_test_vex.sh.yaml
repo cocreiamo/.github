@@ -1,0 +1,7 @@
+id: dotgithub/test/vex.sh
+repo: dotgithub
+invariant: "An OpenVEX statement that silences a finding carries a justification, an impact statement, a product and a vulnerability; vex_lint.py refuses the bad case."
+runs:
+  - pr-ci
+command: bash tests/vex.sh
+file: tests/vex.sh

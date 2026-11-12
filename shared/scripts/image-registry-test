@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# image-registry-check (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture trees: a script, test or workflow
+# that pulls straight from Docker Hub, ghcr.io, quay.io or registry.k8s.io is refused (Docker Hub answers 429 to the shared runner, the
+# registry refuses what is private), whether the reference sits in a docker statement, a keyed image line, a quoted literal or a shell
+# or Python assignment of an image variable; a pull through registry.cocreiamo.com, a URL, plain words, a vouched line with a reason,
+# a fixture, a Markdown file and an allowlisted path pass. These fixtures are the ones every repository shares.
+# shellcheck disable=SC2016 # the fixtures are script text, not expanded here
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/image-registry-check"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "image-registry-check" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+G=git
+fixture() { rm -rf "$tmp/r"; mkdir -p "$tmp/r"; (cd "$tmp/r" && "$G" init -q); }
+put() { mkdir -p "$(dirname "$tmp/r/$1")"; printf '%s\n' "$2" > "$tmp/r/$1"; (cd "$tmp/r" && "$G" add "$1"); }
+refused() { # <path> <content>
+  fixture; put "$1" "$2"
+  if (cd "$tmp/r" && "$check" .) > "$tmp/out" 2>&1; then fail "accepted $1: $2"; fi
+  grep -qF "$1:" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal of $1 does not name it"; }
+}
+# shellcheck disable=SC2329 # called through refused/accepted with a fixture
+accepted_tree() { (cd "$tmp/r" && "$check" .) > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+# shellcheck disable=SC2016 # fixture text
+{
+  refused lib/a.py 'subprocess.run(["docker", "run", "--rm", "-i", "--network", net, "alpine:3.22", "true"])'
+  refused lib/b.py 'CURL = "curlimages/curl:8.22.0"'
+  refused tools/c.sh 'docker run --rm --network host -e A=b busybox true'
+  refused ci/d.yml 'image: grafana/alloy@sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30'
+  refused lib/e.py 'IMAGE = "docker.io/grafana/alloy:v1.20.0"'
+  refused tools/f.sh 'docker run --rm ghcr.io/cloudnative-pg/postgresql:18.1 true'
+  refused tools/g.sh 'docker run --rm registry.k8s.io/pause:3.10 true'
+  refused tools/h.sh 'docker run --rm quay.io/prometheus/busybox:latest true'
+  refused tools/i.sh '# registry-ok:
+docker run --rm busybox true'
+  refused .github/workflows/w.yml 'jobs:
+  x:
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18'
+  refused tools/assign.sh 'image=busybox:1.37
+docker run --rm "$image" true'
+  refused tools/assign-quoted.sh 'export BASE_IMAGE="alpine:3.22"'
+  refused tools/assign-org.sh 'curl_img=curlimages/curl:8.22.0'
+  refused lib/assign.py 'pg_image = "postgres:18.1"'
+}
+
+fixture
+put tools/ok.sh 'echo "see https://ghcr.io/cloudnative-pg is a web page"
+printf '"'"'name:tag and a/b are plain words: %s\n'"'"' "$x"
+docker run --rm --network host registry.cocreiamo.com/dockerhub/library/busybox:1.37 true
+docker create --name x registry.cocreiamo.com/ghcr/cloudnative-pg/postgresql:18.1
+docker run --rm registry.cocreiamo.com/quay/prometheus/busybox:latest true
+image=registry.cocreiamo.com/dockerhub/library/alpine:3.22
+mode=read:write
+# registry-ok: probes the host'"'"'s own pull path, not a test of ours
+docker run --rm ghcr.io/actions/actions-runner:2.338.2 true'
+put lib/ok.py 'ALLOY = "registry.cocreiamo.com/dockerhub/grafana/alloy:v1.20.0"
+subprocess.run(["docker", "run", "--rm", "--network", f"container:{name}", CURL, "-s"])
+TIMEOUT = "10:30"'
+put tests/x/bad/pull.sh 'docker run --rm busybox true'
+put docs/readme.md 'image: node:24'
+put vendor/up/run.sh 'docker run --rm busybox true'
+printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist" 2> /dev/null || { mkdir -p "$tmp/r/.github"; printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist"; }
+accepted_tree "pulls through Harbor, words, a URL, a vouched line, a fixture, a document and an allowlisted directory"
+
+printf 'vendor/up/\n' > "$tmp/r/.github/image-registry-allowlist"
+if (cd "$tmp/r" && "$check" .) > "$tmp/out" 2>&1; then fail "accepted an allowlist line without a reason"; fi
+grep -qF "no reason" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not say the reason is missing"; }
+echo "image-registry-check: ok"
