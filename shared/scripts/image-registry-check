@@ -5,10 +5,11 @@ Docker Hub answers 429 to the shared CI runner and the registries refuse what is
 caches of registry.cocreiamo.com (dockerhub/, ghcr/, quay/, k8s/). Read: the tracked shell, Python, YAML and Dockerfile files. A
 reference is caught in a docker run/create/pull statement, a keyed `image:`/`FROM` line, a quoted literal, or the assignment of an
 image variable (a name with image, img, container or ref in it, or a value with a repository path and a tag), and the `image` of a
-Bazel `oci.pull` in MODULE.bazel (its tag and digest are separate attributes, so a bare name is caught too). A line may vouch for a
-direct pull with `registry-ok: <why>` (on it or the line above). Skipped: Markdown, the fixtures under tests/*/bad and tests/*/good,
-the vendored copies of .github/shared-scripts and the paths of .github/image-registry-allowlist (`<path> <reason>`, a directory ends
-in /; a line without a reason is refused).
+Bazel `oci.pull` in MODULE.bazel (its tag and digest are separate attributes, so a bare name is caught too). A reference without
+a registry host counts only with a Docker Hub shape (`[namespace/]repository`, the namespace a Docker ID or `library`, no source
+file name), so a path:line literal is not one. A line may vouch for a direct pull with `registry-ok: <why>` (on it or the line
+above). Skipped: Markdown, the fixtures under tests/*/bad and tests/*/good, the vendored copies of .github/shared-scripts and the
+paths of .github/image-registry-allowlist (`<path> <reason>`, a directory ends in /; a line without a reason is refused).
 """
 
 import re
@@ -43,9 +44,21 @@ LITERAL = re.compile(
 ASSIGN = re.compile(
     r"""^\s*(?:export\s+|local\s+|readonly\s+|declare\s+(?:-\w+\s+)?)?(?P<name>[A-Za-z_]\w*)\s*=\s*["']?(?P<ref>[^\s"'$;#]+)["']?\s*(?:$|;|#)"""
 )
+DOCKER_ID = re.compile(r"^[a-z0-9]{4,30}$")
+SOURCE_FILE = re.compile(r"\.(py|sh|bash|tf|hcl|rego|ya?ml|json|toml|md|txt|go|rs|js|ts|j2|cfg|conf|ini|sql|bzl|bazel)$")
 IMAGE_NAME = re.compile(r"image|img|container|ref", re.I)
 BAZEL_IMAGE = re.compile(r"""^\s*image\s*=\s*["'](?P<ref>[^"']+)["']""")
 KEYED = re.compile(r"""^\s*(?:-\s*)?(?:image|container|FROM|from)[:\s]+["']?(?P<ref>[^\s"'#]+)""")
+
+
+def docker_hub_shape(ref):
+    """True for a reference without a registry host that Docker Hub could serve: `[namespace/]repository`, the namespace a Docker
+    ID (4 to 30 lowercase letters and digits) or `library`, the repository no source file name. A path:line literal such as
+    `tofu/x/main.tf:1`, `lib/x.sh:1` or `mise-tasks/x:1` has none of that shape."""
+    parts = re.split(r"[:@]", ref, maxsplit=1)[0].split("/")
+    if len(parts) > 2 or SOURCE_FILE.search(parts[-1]):
+        return False
+    return len(parts) == 1 or parts[0] == "library" or bool(DOCKER_ID.match(parts[0]))
 
 
 def direct(ref):
@@ -55,7 +68,9 @@ def direct(ref):
     head = ref.split("/", 1)[0]
     if head in DIRECT_HOSTS:
         return True
-    return ("/" not in ref or ("." not in head and ":" not in head and head != "localhost")) and bool(REF.match(ref))
+    if "/" in ref and ("." in head or ":" in head or head == "localhost"):
+        return False
+    return bool(REF.match(ref)) and docker_hub_shape(ref)
 
 
 def positional(text, python):
