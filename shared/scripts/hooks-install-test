@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# hooks-install (shared/scripts, or its vendored copy next to testlib.sh), the mise postinstall of every repository, on a throwaway
+# clone with a worktree: with core.hooksPath set it warns, names the one-time cutover on the main checkout and leaves the shared
+# configuration untouched, from the main checkout and from a worktree alike; with core.hooksPath unset it runs `pre-commit install`.
+# shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+install="$here/hooks-install"
+[ -x "$install" ] || fail "$install is missing"
+tmpdir
+git_env_clear
+G=git
+git_repo "$tmp/main"
+"$G" -C "$tmp/main" commit -q --allow-empty -m "chore: root"
+"$G" -C "$tmp/main" worktree add -q -b topic "$tmp/wt"
+stub_bin pre-commit 'echo "$*" >> "$PRE_COMMIT_CALLS"'
+export PRE_COMMIT_CALLS="$tmp/calls"
+
+for where in wt main; do
+  : > "$tmp/calls"
+  "$G" -C "$tmp/main" config core.hooksPath hooks
+  (cd "$tmp/$where" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed in $where with core.hooksPath set"; }
+  [ "$("$G" -C "$tmp/main" config --get core.hooksPath)" = hooks ] || fail "hooks-install in $where changed the core.hooksPath every worktree shares"
+  [ ! -s "$tmp/calls" ] || fail "hooks-install in $where ran pre-commit while core.hooksPath is set"
+  grep -qF "main checkout" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" && grep -qF "$tmp/main" "$tmp/out" \
+    || { cat "$tmp/out" >&2; fail "hooks-install in $where does not name the one-time cutover on the main checkout ($tmp/main)"; }
+done
+
+"$G" -C "$tmp/main" config --unset core.hooksPath
+: > "$tmp/calls"
+(cd "$tmp/wt" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed with core.hooksPath unset"; }
+[ "$(cat "$tmp/calls")" = install ] || fail "hooks-install did not run 'pre-commit install' with core.hooksPath unset"
+echo "hooks-install: ok"

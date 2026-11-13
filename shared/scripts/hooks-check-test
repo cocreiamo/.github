@@ -44,6 +44,13 @@ fresh; rm "$tmp/r/.pre-commit-config.yaml"; bad "a repository with no config" ".
 fresh "${good//conflict-markers/other}"; bad "a config without conflict-markers" "conflict-markers"
 fresh "${good//        stages: \[pre-push\]/}"; bad "ci-prepush outside the pre-push stage" "ci-prepush"
 fresh; "$G" -C "$tmp/r" config core.hooksPath hooks; bad "a core.hooksPath" "core.hooksPath"
+grep -qF "main checkout ($tmp/r)" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" \
+  || { cat "$tmp/out" >&2; fail "the core.hooksPath advice does not name the one-time cutover on the main checkout"; }
+"$G" -C "$tmp/r" commit -q --allow-empty -m "chore: root"
+"$G" -C "$tmp/r" worktree add -q -b topic "$tmp/wt"
+(cd "$tmp/wt" && "$check") > "$tmp/out" 2>&1 && fail "accepted a core.hooksPath seen from a worktree"
+grep -qF "main checkout ($tmp/r)" "$tmp/out" || { cat "$tmp/out" >&2; fail "the advice from a worktree does not name the main checkout"; }
+rm -rf "$tmp/wt"
 fresh; rm "$tmp/r/.git/hooks/pre-push"; bad "a declared type not installed" "pre-push"
 fresh; printf '#!/bin/sh\nexit 0\n' > "$tmp/r/.git/hooks/commit-msg"; chmod +x "$tmp/r/.git/hooks/commit-msg"; bad "a hook the framework did not write" "commit-msg"
 fresh; printf '#!/bin/sh\nexit 0\n' > "$tmp/r/.git/hooks/pre-push"; bad "a declared type overwritten by hand" "pre-push"
