@@ -25,7 +25,7 @@ git ls-files -z -- "$scripts" | while IFS= read -r -d '' f; do
   cp -p "$f" "$tmp/tracked/${f#"$scripts"/}"
 done
 diff -r "$tmp/tracked" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from the tracked files of $scripts (an untracked or ignored file must never be embedded): run tools/embed-scripts.sh"
-for f in "$scripts"/*; do
+for f in "$tmp/tracked"/*; do
   [ "$(test -x "$f" && echo x)" = "$(test -x "$tmp/embedded/${f##*/}" && echo x)" ] || fail "the executable bit of ${f##*/} differs in the embedded bundle"
 done
 

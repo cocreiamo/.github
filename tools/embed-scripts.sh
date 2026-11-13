@@ -46,8 +46,10 @@ embed_chunks() {
   rm -f "$tmp".chunk.*
 }
 CHUNK_LINES=1150
+# tracked <dir>: a reproducible tar of the files git tracks under <dir>, so a local cache or leftover is never embedded.
+tracked() { git ls-files -z -- "$1" | sed -z "s|^$1/|./|" | tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C "$1" --null -T -; }
 
-bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts . | gzip -n -9 | base64 -w76)
+bundle=$(tracked shared/scripts | gzip -n -9 | base64 -w76)
 embed_chunks .github/workflows/shared-rules.yml SCRIPTS_BUNDLE "$bundle"
 check_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts commit-identity unattributed_commits.py | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +CHECK_BUNDLE: \\|-$' "$check_bundle"
@@ -55,7 +57,7 @@ pins_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf
 embed .github/workflows/shared-rules.yml '^ +PINS_BUNDLE: \\|-$' "$pins_bundle"
 rules_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/scripts pr-size comment-hygiene claude-md-duplicates claude-md-paragraphs | gzip -n -9 | base64 -w76)
 embed .github/workflows/shared-rules.yml '^ +RULES_BUNDLE: \\|-$' "$rules_bundle"
-config_bundle=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C shared/config . | gzip -n -9 | base64 -w76)
+config_bundle=$(tracked shared/config | gzip -n -9 | base64 -w76)
 embed_chunks .github/workflows/shared-rules.yml CONFIGS_BUNDLE "$config_bundle"
 embed .github/workflows/shared-rules.yml '^ +CANONICAL: \\|-$' "$(cat shared/working-with-the-founder.md)"
 embed .github/workflows/stalled-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/stalled_prs.py)"
