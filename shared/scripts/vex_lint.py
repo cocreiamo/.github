@@ -1,6 +1,7 @@
 """Lint OpenVEX documents: a silenced finding must say why (usage: vex_lint.py FILE...)."""
 
 import json
+import re
 import sys
 
 JUSTIFICATIONS = {
@@ -29,6 +30,8 @@ def problems(path):
                 out.append(f"{where}: not_affected needs a justification from {sorted(JUSTIFICATIONS)}")
             if len((st.get("impact_statement") or "").strip()) < 20:
                 out.append(f"{where}: not_affected needs an impact statement that explains it")
+        if st.get("status") == "affected" and not re.search(r"review by \d{4}-\d{2}-\d{2}", st.get("action_statement") or ""):
+            out.append(f"{where}: affected needs an action statement that says «review by YYYY-MM-DD»")
     return out
 
 
