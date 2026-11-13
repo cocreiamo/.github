@@ -3,7 +3,8 @@
 # that pulls straight from Docker Hub, ghcr.io, quay.io or registry.k8s.io is refused (Docker Hub answers 429 to the shared runner, the
 # registry refuses what is private), whether the reference sits in a docker statement, a keyed image line, a quoted literal or a shell
 # or Python assignment of an image variable, or the image of a Bazel oci.pull in MODULE.bazel; a pull through registry.cocreiamo.com,
-# a URL, plain words, a vouched line with a reason, a fixture, a Markdown file and an allowlisted path pass. These fixtures are the ones every repository shares.
+# a URL, plain words, a vouched line with a reason, a fixture, a Markdown file, an allowlisted path and a path:line literal (no
+# Docker Hub repository shape) pass. These fixtures are the ones every repository shares.
 # shellcheck disable=SC2016 # the fixtures are script text, not expanded here
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
@@ -92,6 +93,16 @@ oci.pull(
 )'
 printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist"
 accepted_tree "pulls through Harbor, words, a URL, a vouched line, a fixture, a document and an allowlisted directory"
+
+fixture
+put lib/config_test.py 'self.assertTrue(any("tofu/x/main.tf:1" in p and "account id" in p for p in self.problems()))
+self.assertTrue(any("lib/x.sh:1" in p and "node address" in p for p in self.problems()))
+self.assertTrue(any("mise-tasks/x:1" in p and "bucket name" in p for p in self.problems()))
+where = "tests/policy/rules.rego:42"
+LOCATION = "main.tf:7"'
+accepted_tree "path:line literals: no Docker Hub repository has three components, a namespace with a hyphen or under four characters, or a source file name"
+refused lib/library.py 'IMAGE = "library/nginx:1.29"'
+refused lib/ns.py 'IMAGE = "bitnami/redis:8.2"'
 
 printf 'vendor/up/\n' > "$tmp/r/.github/image-registry-allowlist"
 if (cd "$tmp/r" && "$check" .) > "$tmp/out" 2>&1; then fail "accepted an allowlist line without a reason"; fi
