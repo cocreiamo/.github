@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# comment-hygiene (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture diffs and trees: an added
+# comment that cites a decision record, an issue or a pull request, tells history or keeps commented-out code is refused; a
+# comment that says why, a directive, PEP 723 metadata, a code line with a # inside a string, a fixture, an allowlisted path and
+# a line allowed with a reason pass; --all reads the whole tree and only the added lines of a diff count.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+check="$repo/shared/scripts/comment-hygiene"
+[ ! -f "$repo/.github/shared-scripts" ] || check="$repo/$(awk '$1 == "comment-hygiene" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+diff_of() { # <path> <added lines...>: a unified diff that adds the lines at the top of <path>
+  local path=$1; shift
+  printf -- '--- a/%s\n+++ b/%s\n@@ -0,0 +1,%d @@\n' "$path" "$path" "$#"
+  printf '+%s\n' "$@"
+}
+mkdir -p "$tmp/r/.github"
+refused() { # <what> <text>: the diff is $tmp/d
+  if (cd "$tmp/r" && "$check" --diff "$tmp/d") > "$tmp/out" 2>&1; then cat "$tmp/out" >&2; fail "accepted $1"; fi
+  grep -qF -- "$2" "$tmp/out" || { cat "$tmp/out" >&2; fail "refused $1 without saying '$2'"; }
+}
+accepted() { (cd "$tmp/r" && "$check" --diff "$tmp/d") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused $1"; }; }
+
+for bad in "# The storage is node-local (ADR-0078)." "# Works around issue 42 of the runner." "# Fixes the race of #123." \
+  "# See https://github.com/cocreiamo/deploy/pull/45 for the incident."; do
+  diff_of lib/a.sh "$bad" "echo ok" > "$tmp/d"
+  refused "a reference: $bad" "lib/a.sh:1: reference"
+done
+for bad in "# Added on 2026-11-05 after the outage." "# Previously the job ran on the large runner." "# The bucket was renamed to keep the prefix."; do
+  diff_of tofu/main.tf "$bad" > "$tmp/d"
+  refused "history: $bad" "tofu/main.tf:1: history"
+done
+for bad in "# import json" "# x = compute()" "# echo \"\$token\"" "# fi" "# return result" "# from pathlib import Path"; do
+  diff_of lib/b.py "$bad" > "$tmp/d"
+  refused "commented-out code: $bad" "lib/b.py:1: commented-out code"
+done
+diff_of web/app.js "// fetchAll();" > "$tmp/d"
+refused "commented-out JS" "web/app.js:1: commented-out code"
+diff_of lib/c.py "import os" "# os.remove(path)" > "$tmp/d"
+refused "the line number of an added line" "lib/c.py:2:"
+
+diff_of lib/ok.py '#!/usr/bin/env python3' '# /// script' '# dependencies = ["pyyaml==6.0.3"]' '# ///' \
+  "# The API answers 404 for a token without the scope, so a missing scope reads as a missing repository." \
+  "# shellcheck disable=SC2016 # literal text" 'url = "https://x/#123"' "# noqa: E501" "# A path that no longer exists is skipped." > "$tmp/d"
+accepted "a why, directives, PEP 723 metadata and a # inside code"
+diff_of tests/x/bad/leak.sh "# ADR-0001" > "$tmp/d"
+accepted "a fixture"
+diff_of lib/d.sh "# Pinned until the upstream fix lands (ADR-0042) comment-hygiene: allow the record is the upstream changelog name" > "$tmp/d"
+accepted "an allowed line"
+diff_of lib/d.sh "# ADR-0042 comment-hygiene: allow" > "$tmp/d"
+refused "an allow marker without a reason" "without a reason"
+mkdir -p "$tmp/r/vendor/up"
+printf 'vendor/up/ upstream sources, kept byte for byte\n' > "$tmp/r/.github/comment-hygiene-allowlist"
+diff_of vendor/up/configure "# We used to check for pthread.h first." > "$tmp/d"
+accepted "an allowlisted directory"
+printf 'vendor/up/\n' > "$tmp/r/.github/comment-hygiene-allowlist"
+refused "an allowlist line without a reason" "has no reason"
+rm "$tmp/r/.github/comment-hygiene-allowlist"
+
+printf -- '--- a/lib/e.sh\n+++ b/lib/e.sh\n@@ -1,2 +1,2 @@\n # ADR-0001 old debt\n-echo a\n+echo b\n' > "$tmp/d"
+accepted "an untouched old comment in the context of a diff"
+
+# shellcheck disable=SC2046 # one name per word
+unset $(git rev-parse --local-env-vars)
+G=git
+(cd "$tmp/r" && "$G" init -q && mkdir -p lib && printf '# Cited ADR-0001.\necho x\n' > lib/f.sh && "$G" add lib/f.sh)
+if (cd "$tmp/r" && "$check" --all) > "$tmp/out" 2>&1; then fail "--all accepted a tree with a reference"; fi
+grep -qF "lib/f.sh:1: reference" "$tmp/out" || { cat "$tmp/out" >&2; fail "--all did not name lib/f.sh:1"; }
+
+echo "comment-hygiene: ok"

@@ -1,0 +1,7 @@
+id: dotgithub/test/schemas.sh
+repo: dotgithub
+invariant: The workflows, the issue forms and their config, and the Renovate configs match their SchemaStore schemas, and a broken one is refused.
+runs:
+  - pr-ci
+command: bash tests/schemas.sh
+file: tests/schemas.sh

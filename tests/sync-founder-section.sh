@@ -37,8 +37,9 @@ mkdir "$tmp/none"; printf '# Repo\n\n## Layout\n\nx\n' > "$tmp/none/CLAUDE.md"
 if sync "$tmp/none"; then fail "the sync accepted a CLAUDE.md without the section"; fi
 
 scripts_check=$(yq -N '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .run' "$wf")
-bundle=$(yq -N '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .env.SCRIPTS_BUNDLE' "$wf")
-scripts_pass() { (cd "$1" && SCRIPTS_BUNDLE="$bundle" bash -c "$scripts_check") >/dev/null 2>&1; }
+printf '%s\n' "$scripts_check" > "$tmp/scripts-check.sh"
+set -a; eval "$(yq -N -o shell '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .env' "$wf")"; set +a
+scripts_pass() { (cd "$1" && bash "$tmp/scripts-check.sh") >/dev/null 2>&1; }
 mkdir -p "$tmp/vendored/.github" "$tmp/vendored/tasks"
 { printf '# Repo\n\n'; old; } > "$tmp/vendored/CLAUDE.md"
 printf 'wt-gc tasks/gc\nwt-list tasks/deep/list\n' > "$tmp/vendored/.github/shared-scripts"

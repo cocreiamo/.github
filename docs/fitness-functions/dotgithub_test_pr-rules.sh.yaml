@@ -1,0 +1,7 @@
+id: dotgithub/test/pr-rules.sh
+repo: dotgithub
+invariant: Every commit of a PR is Conventional, the title type is the strongest commit type and a docs title changes no code; the reusable pr-rules workflow runs exactly the shared script.
+runs:
+  - pr-ci
+command: bash tests/pr-rules.sh
+file: tests/pr-rules.sh

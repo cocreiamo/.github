@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# hooks-install: the mise postinstall of every repository. Runs `pre-commit install` when core.hooksPath is unset. core.hooksPath
+# lives in the configuration every worktree of a clone shares, so it is unset only from the main checkout and only when the
+# directory it names holds no real pre-commit hook any more (gone, or the `cocreiamo-hooks-moved` shim): git would otherwise run
+# no hook at all, silently. In every other case it warns and changes nothing.
+set -euo pipefail
+if path=$(git config --get core.hooksPath); then
+  main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  top=$(git rev-parse --show-toplevel)
+  case "$path" in
+  /*) dir=$path ;;
+  *) dir="$top/$path" ;;
+  esac
+  if [ "$top" = "$main" ] && { [ ! -e "$dir/pre-commit" ] || grep -qF cocreiamo-hooks-moved "$dir/pre-commit"; }; then
+    git config --unset core.hooksPath
+    echo "hooks-install: core.hooksPath '$path' held no real hook any more: unset, the pre-commit framework takes over" >&2
+    exec pre-commit install
+  fi
+  echo "hooks-install: core.hooksPath is set to '$path' in the configuration every worktree shares, so the pre-commit hooks stay off; left as it is." >&2
+  echo "hooks-install: the one-time cutover runs on the main checkout ($main), never inside a worktree: cd '$main' && git config --unset core.hooksPath && pre-commit install" >&2
+  exit 0
+fi
+exec pre-commit install

@@ -11,21 +11,28 @@ step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
 tmpdir
 git_env_clear
 
-bundle=$(step "vendored scripts equal the canonical ones" .env.SCRIPTS_BUNDLE)
-[ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored scripts equal the canonical ones' with SCRIPTS_BUNDLE"
 check=$(step "vendored scripts equal the canonical ones" .run)
+bundle=$(step "vendored scripts equal the canonical ones" '.env | to_entries | .[] | select(.key | test("^SCRIPTS_BUNDLE_[0-9]+$")) | .value')
+[ -n "$bundle" ] || fail "$wf has no step 'vendored scripts equal the canonical ones' whose env carries the keys SCRIPTS_BUNDLE_1, SCRIPTS_BUNDLE_2, ..."
 fetch=$(step "fetch the vendored scripts" .run)
 [ -n "$fetch" ] && [ "$fetch" != null ] || fail "$wf has no step 'fetch the vendored scripts'"
 
 mkdir "$tmp/embedded"
 base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
-diff -r "$scripts" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from $scripts: run tools/embed-scripts.sh"
-for f in "$scripts"/*; do
+mkdir "$tmp/tracked"
+git ls-files -z -- "$scripts" | while IFS= read -r -d '' f; do
+  mkdir -p "$(dirname "$tmp/tracked/${f#"$scripts"/}")"
+  cp -p "$f" "$tmp/tracked/${f#"$scripts"/}"
+done
+diff -r "$tmp/tracked" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from the tracked files of $scripts (an untracked or ignored file must never be embedded): run tools/embed-scripts.sh"
+for f in "$tmp/tracked"/*; do
   [ "$(test -x "$f" && echo x)" = "$(test -x "$tmp/embedded/${f##*/}" && echo x)" ] || fail "the executable bit of ${f##*/} differs in the embedded bundle"
 done
 
 # run <dir>: the check as the workflow runs it, in <dir>
-run() { (cd "$1" && SCRIPTS_BUNDLE="$bundle" bash -c "$check") >"$tmp/out" 2>&1; }
+printf '%s\n' "$check" > "$tmp/check.sh"
+set -a; eval "$(yq -N -o shell '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .env' "$wf")"; set +a
+run() { (cd "$1" && bash "$tmp/check.sh") >"$tmp/out" 2>&1; }
 mkrepo() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github" "$tmp/repo/tasks"
   cp -p "$scripts/wt-gc" "$tmp/repo/tasks/gc"

@@ -1,0 +1,7 @@
+id: dotgithub/test/image-registry.sh
+repo: dotgithub
+invariant: "Every image pull in a script, test or workflow goes through registry.cocreiamo.com; image-registry-check refuses the bad case."
+runs:
+  - pr-ci
+command: bash tests/image-registry.sh
+file: tests/image-registry.sh

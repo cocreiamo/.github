@@ -6,5 +6,5 @@ description = "Fixtures of the scrubbing tests: fake secrets that the telemetry 
 paths = ['''tests/scrubbing/samples\.yaml''']
 
 [[allowlists]]
-description = "Vendored upstream manifests and the public Traefik plugin manifest: no secret of ours, the matches are placeholders in upstream examples"
-paths = ['''platform/cloudnative-pg/plugin-barman-cloud\.yaml''', '''platform/traefik-config/plugins/crowdsec-bouncer/\.traefik\.yml''']
+description = "Vendored upstream manifests: no secret of ours, the matches are placeholders in upstream examples"
+paths = ['''platform/cloudnative-pg/plugin-barman-cloud\.yaml''']

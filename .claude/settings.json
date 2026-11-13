@@ -9,5 +9,18 @@
     "OTEL_LOG_TOOL_DETAILS": "1",
     "OTEL_RESOURCE_ATTRIBUTES": "service.name=claude-code,repo=.github"
   },
-  "otelHeadersHelper": "\"$(git rev-parse --show-toplevel)/.claude/otel-headers.sh\""
+  "otelHeadersHelper": "\"$(git rev-parse --show-toplevel)/.claude/otel-headers.sh\"",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env -u BASH_ENV \"$(git rev-parse --show-toplevel)/shared/scripts/claude-pre-bash\""
+          }
+        ]
+      }
+    ]
+  }
 }

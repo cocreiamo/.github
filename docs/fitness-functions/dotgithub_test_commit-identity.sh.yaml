@@ -1,7 +1,7 @@
 id: dotgithub/test/commit-identity.sh
 repo: dotgithub
-invariant: 'The shared commit-identity hook script refuses a commit whose author or committer email is on a reserved test domain (example, invalid, test, localhost and their subdomains), which GitHub cannot attribute, and accepts a real address.'
+invariant: "The shared commit-identity hook script refuses a commit whose author or committer email is on a reserved test domain (example, invalid, test, localhost and their subdomains), which GitHub cannot attribute, and accepts a real address."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/commit-identity.sh
 file: tests/commit-identity.sh

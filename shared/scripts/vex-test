@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# vex_lint.py (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture OpenVEX documents: a not_affected statement
+# without a known justification or a real impact statement, an affected statement whose action statement says no «review by
+# YYYY-MM-DD», a statement with no product or vulnerability, and a document without its header are refused; a complete document
+# passes. The fixtures every repository shares.
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+lint="$repo/shared/scripts/vex_lint.py"
+[ ! -f "$repo/.github/shared-scripts" ] || lint="$repo/$(awk '$1 == "vex_lint.py" { print $2 }' "$repo/.github/shared-scripts")"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+head='"@context": "https://openvex.dev/ns/v0.2.0", "@id": "https://cocreiamo.com/vex/x", "author": "francesco.bilotta@cocreiamo.com", "timestamp": "2026-11-01T00:00:00Z"'
+doc() { printf '{%s, "statements": [%s]}\n' "${2-$head}" "$1" > "$tmp/d.json"; }
+good='{"vulnerability": {"name": "CVE-2026-0001"}, "products": [{"@id": "pkg:oci/app"}], "status": "not_affected", "justification": "vulnerable_code_not_in_execute_path", "impact_statement": "the parser is never reached: the app reads no XML"}'
+doc "$good"
+python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused a complete document"; }
+for bad in "${good/vulnerable_code_not_in_execute_path/because}" "${good/the parser is never reached: the app reads no XML/fine}" \
+  "${good/\"products\": \[{\"@id\": \"pkg:oci\/app\"}\], /}" "${good/\"name\": \"CVE-2026-0001\"/}"; do
+  doc "$bad"
+  if python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1; then fail "accepted: $bad"; fi
+done
+doc "$good" '"@context": "https://openvex.dev/ns/v0.2.0"'
+if python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1; then fail "accepted a document without @id, author and timestamp"; fi
+affected='{"vulnerability": {"name": "CVE-2026-0002"}, "products": [{"@id": "pkg:oci/app"}], "status": "affected", "action_statement": "no fixed release yet; review by 2026-12-01"}'
+doc "$affected"
+python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused an affected statement with a review date"; }
+for bad in "${affected/; review by 2026-12-01/}" "${affected/review by 2026-12-01/review soon}" "${affected/, \"action_statement\": \"no fixed release yet; review by 2026-12-01\"/}"; do
+  doc "$bad"
+  if python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1; then fail "accepted an affected statement without «review by YYYY-MM-DD»: $bad"; fi
+  grep -qF "review by YYYY-MM-DD" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not ask for the review date"; }
+done
+echo "vex_lint: ok"

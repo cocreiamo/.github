@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="The shared lint baseline of every own script, config and file: shellcheck and shfmt on shell, ruff check and format on Python, yamllint --strict on YAML, gitleaks on the tree; tracked files only, vendored copies (.github/shared-scripts), templates (*.j2, *.jinja, *.jinja2, *.tmpl, *.tpl, *.erb, *.mustache) and the deliberate fixtures (tests/*/bad, tests/*/good) skipped. One part only: shell, python, yaml, secrets"
-# lint-baseline [shell|python|yaml|secrets|all|--fast]   runs at the root of the repository (a vendored copy sits wherever .github/shared-scripts puts it).
-#   lint-baseline --list shell|python   prints the files that part checks.
-# The rules are the repository's own configuration (.shellcheckrc, .editorconfig for shfmt, ruff.toml or pyproject.toml, .yamllint, .gitleaks.toml): the
-# script decides what is checked, the configs decide how strictly. Needs shellcheck, shfmt, ruff, yamllint and gitleaks (the shared mise tools block pins them).
+#MISE description="The shared lint baseline of every own script, config and file: shellcheck and shfmt on shell, ruff check and format on Python, yamllint --strict on YAML, prettier --check on YAML, Markdown, JSON and JS, gitleaks on the tree; tracked files only, vendored copies (.github/shared-scripts), templates (*.j2, *.jinja, *.jinja2, *.tmpl, *.tpl, *.erb, *.mustache) and the deliberate fixtures (tests/*/bad, tests/*/good) skipped. One part only: shell, python, yaml, format, secrets"
+# lint-baseline [shell|python|yaml|format|secrets|all|--fast]   runs at the root of the repository (a vendored copy sits wherever .github/shared-scripts puts it).
+#   lint-baseline --list shell|python|format   prints the files that part checks.
+# The rules are the repository's own configuration (.shellcheckrc, .editorconfig for shfmt, ruff.toml or pyproject.toml, .yamllint, .prettierrc.json and
+# .prettierignore, .gitleaks.toml): the script decides what is checked, the configs decide how strictly. One formatter per file type: prettier owns YAML,
+# Markdown, JSON and JS, shfmt shell, ruff Python. Needs shellcheck, shfmt, ruff, yamllint, prettier and gitleaks (the shared mise tools block pins them).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
@@ -21,11 +22,11 @@ own_files() {
     [ -z "${vendored[$f]:-}" ] || continue
     case "$f" in *.j2 | *.jinja | *.jinja2 | *.tmpl | *.tpl | *.erb | *.mustache) continue ;; esac
     case "$kind:$f" in
-    shell:*.sh | python:*.py | yaml:*.yaml | yaml:*.yml | yaml:.yamllint | yaml:*/.yamllint)
+    shell:*.sh | python:*.py | yaml:*.yaml | yaml:*.yml | yaml:.yamllint | yaml:*/.yamllint | format:*.yaml | format:*.yml | format:*.md | format:*.json | format:*.js | format:*.mjs | format:*.cjs)
       printf '%s\n' "$f"
       continue
       ;;
-    yaml:*) continue ;;
+    yaml:* | format:*) continue ;;
     esac
     case "$kind" in
     shell) head -n 1 "$f" 2>/dev/null | grep -aqE '^#!.*(bash|dash|/sh|env +(-S +)?sh)( |$)' && printf '%s\n' "$f" ;;
@@ -58,6 +59,15 @@ lint_yaml() {
   yamllint --strict "${files[@]}"
 }
 
+lint_format() {
+  local files config=()
+  mapfile -t files < <(own_files format)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  # cocreiamo/.github keeps the canonical config in shared/config, not at its root
+  [ -e .prettierrc.json ] || [ ! -f shared/config/.prettierrc.json ] || config=(--config shared/config/.prettierrc.json)
+  prettier --check --log-level warn "${config[@]}" "${files[@]}"
+}
+
 lint_secrets() {
   local tree f
   tree=$(mktemp -d)
@@ -70,18 +80,20 @@ lint_secrets() {
 }
 
 if [ "${1:-}" = "--list" ]; then
-  own_files "${2:?shell or python}"
+  own_files "${2:?shell, python or format}"
   exit 0
 fi
 case "${1:-all}" in
 shell) lint_shell ;;
 python) lint_python ;;
 yaml) lint_yaml ;;
+format) lint_format ;;
 secrets) lint_secrets ;;
 all | --fast)
   lint_shell
   lint_python
   lint_yaml
+  lint_format
   lint_secrets
   ;;
 *)

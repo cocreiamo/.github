@@ -1,0 +1,7 @@
+id: dotgithub/test/pr-size.sh
+repo: dotgithub
+invariant: "A pull request over the line budget is refused unless the founder allows it to be large (label large-pr or a platform/* branch, which only warn); pr-size refuses the bad case."
+runs:
+  - pr-ci
+command: bash tests/pr-size.sh
+file: tests/pr-size.sh

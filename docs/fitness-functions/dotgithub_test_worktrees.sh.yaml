@@ -1,7 +1,7 @@
 id: dotgithub/test/worktrees.sh
 repo: dotgithub
-invariant: 'This repository cleans its worktrees with the shared wt:gc and wt:list through its own mise tasks, and the shared test proves them: a merged clean worktree is removed; a dirty one, one with an open PR and one a process uses are kept.'
+invariant: "This repository cleans its worktrees with the shared wt:gc and wt:list through its own mise tasks, and the shared test proves them: a merged clean worktree is removed; a dirty one, one with an open PR and one a process uses are kept."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/worktrees.sh
 file: tests/worktrees.sh

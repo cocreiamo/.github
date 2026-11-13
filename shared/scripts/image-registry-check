@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""image-registry-check [repository root]: no script, test or workflow pulls straight from Docker Hub, ghcr.io, quay.io or registry.k8s.io.
+
+Docker Hub answers 429 to the shared CI runner and the registries refuse what is private, so every pull goes through the Harbor proxy
+caches of registry.cocreiamo.com (dockerhub/, ghcr/, quay/, k8s/). Read: the tracked shell, Python, YAML and Dockerfile files. A
+reference is caught in a docker run/create/pull statement (shell words parsed with shlex), a workflow env value (an upper-case key
+with IMAGE, IMG, CONTAINER or REF in it, or a value with a repository path), a keyed `image:`/`FROM` line, a quoted literal, the
+assignment of an image variable (a name with image, img, container or ref in it, or a value with a repository path and a tag), and
+the `image` of a Bazel `oci.pull` in MODULE.bazel (its tag and digest are separate attributes, so a bare name is caught too). A
+reference without a registry host counts only with a Docker Hub shape (`[namespace/]repository`, the namespace a Docker ID or
+`library`, no source file name), so a path:line literal is not one. A line may vouch for a direct pull with `registry-ok: <why>`
+(on it or the line above). Skipped: Markdown, the fixtures under tests/*/bad and tests/*/good, the vendored copies of
+.github/shared-scripts and the paths of .github/image-registry-allowlist (`<path> <reason>`, a directory ends in /; a line without
+a reason is refused).
+"""
+
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+DIRECT_HOSTS = ("docker.io", "index.docker.io", "registry-1.docker.io", "ghcr.io", "quay.io", "registry.k8s.io")
+OUR = "registry.cocreiamo.com/"
+VOUCH = re.compile(r"registry-ok:\s*\S")
+BOOLEAN = {
+    "--rm",
+    "-i",
+    "-t",
+    "-it",
+    "-d",
+    "--init",
+    "--privileged",
+    "--read-only",
+    "-q",
+    "--quiet",
+    "--detach",
+    "--interactive",
+    "--tty",
+    "--no-healthcheck",
+}
+STATEMENT = re.compile(r"""docker["'\s,]+(?:container["'\s,]+)?(run|create|pull)\b""")
+REF = re.compile(r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?(?:@sha256:[0-9a-f]{64})?$")
+LITERAL = re.compile(
+    r"""["']((?:[a-z0-9][a-z0-9._-]*/)+[a-z0-9][a-z0-9._-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?(?:@sha256:[0-9a-f]{64})?)["']"""
+)
+ASSIGN = re.compile(
+    r"""^\s*(?:export\s+|local\s+|readonly\s+|declare\s+(?:-\w+\s+)?)?(?P<name>[A-Za-z_]\w*)\s*=\s*["']?(?P<ref>[^\s"'$;#]+)["']?\s*(?:$|;|#)"""
+)
+DOCKER_ID = re.compile(r"^[a-z0-9]{4,30}$")
+SOURCE_FILE = re.compile(r"\.(py|sh|bash|tf|hcl|rego|ya?ml|json|toml|md|txt|go|rs|js|ts|j2|cfg|conf|ini|sql|bzl|bazel)$")
+IMAGE_NAME = re.compile(r"image|img|container|ref", re.I)
+BAZEL_IMAGE = re.compile(r"""^\s*image\s*=\s*["'](?P<ref>[^"']+)["']""")
+ENV_VALUE = re.compile(r"""^\s*(?P<name>[A-Z_][A-Z0-9_]*):\s+["']?(?P<ref>[^\s"'#]+)["']?\s*(?:#.*)?$""")
+KEYED = re.compile(r"""^\s*(?:-\s*)?(?:image|container|FROM|from)[:\s]+["']?(?P<ref>[^\s"'#]+)""")
+
+
+def docker_hub_shape(ref):
+    """True for a reference without a registry host that Docker Hub could serve: `[namespace/]repository`, the namespace a Docker
+    ID (4 to 30 lowercase letters and digits) or `library`, the repository no source file name. A path:line literal such as
+    `tofu/x/main.tf:1`, `lib/x.sh:1` or `mise-tasks/x:1` has none of that shape."""
+    parts = re.split(r"[:@]", ref, maxsplit=1)[0].split("/")
+    if len(parts) > 2 or SOURCE_FILE.search(parts[-1]):
+        return False
+    return len(parts) == 1 or parts[0] == "library" or bool(DOCKER_ID.match(parts[0]))
+
+
+def direct(ref):
+    """True for a reference that bypasses our proxy: a Docker Hub, ghcr.io, quay.io or registry.k8s.io host, or no registry host at all."""
+    if ref.startswith(OUR) or "$" in ref or "{" in ref:
+        return False
+    head = ref.split("/", 1)[0]
+    if head in DIRECT_HOSTS:
+        return True
+    if "/" in ref and ("." in head or ":" in head or head == "localhost"):
+        return False
+    return bool(REF.match(ref)) and docker_hub_shape(ref)
+
+
+def positional(text, python):
+    """The image of a docker run/create/pull statement: the first word that is no option and no option value."""
+    words = None
+    if not python:
+        try:
+            words = shlex.split(text.rstrip().rstrip("\\"), comments=True)
+        except ValueError:
+            words = None
+    if words is not None:
+        quoted = [True] * len(words)
+    else:
+        words = [w for w in re.split(r"[\s,]+", text) if w and w != "+"]
+        quoted = [bool(re.match(r"""^[\[(]*f?["']""", w)) or i == 0 for i, w in enumerate(words)]
+        words = [w.strip("\"',[]()") for w in words]
+    i = 0
+    while i < len(words) and not (words[i] == "docker"):
+        i += 1
+    while i < len(words) and words[i] not in ("run", "create", "pull"):
+        i += 1
+    i += 1
+    while i < len(words):
+        w = words[i]
+        if python and not quoted[i]:
+            return None
+        if w.startswith("-"):
+            i += 1 if (w in BOOLEAN or "=" in w) else 2
+            continue
+        return w
+    return None
+
+
+def violations(path, text):
+    found = []
+    lines = text.splitlines()
+    for number, line in enumerate(lines, 1):
+        vouched = bool(VOUCH.search(line)) or (number > 1 and bool(VOUCH.search(lines[number - 2])))
+        if vouched or line.lstrip().startswith("#"):
+            continue
+        hit = None
+        for host in DIRECT_HOSTS:
+            if re.search(rf"(?<![A-Za-z0-9./-]){re.escape(host)}/", line):
+                hit = host
+        if hit is None:
+            m = KEYED.match(line)
+            if m and not path.endswith(".md") and direct(m.group("ref")) and ("/" in m.group("ref") or ":" in m.group("ref")):
+                hit = m.group("ref")
+        if hit is None:
+            for m in LITERAL.finditer(line):
+                if (":" in m.group(1) or "@" in m.group(1)) and direct(m.group(1)) and not re.search(r"https?://", line):
+                    hit = m.group(1)
+                    break
+        if hit is None:
+            m = ASSIGN.match(line)
+            if m and not path.endswith((".yml", ".yaml")):
+                ref = m.group("ref")
+                if (":" in ref or "@" in ref) and direct(ref) and (IMAGE_NAME.search(m.group("name")) or "/" in ref):
+                    hit = ref
+        if hit is None and path.endswith((".yml", ".yaml")):
+            m = ENV_VALUE.match(line)
+            if m:
+                ref = m.group("ref")
+                if (":" in ref or "@" in ref) and direct(ref) and (IMAGE_NAME.search(m.group("name")) or "/" in ref):
+                    hit = ref
+        if hit is None and path.rsplit("/", 1)[-1] == "MODULE.bazel":
+            m = BAZEL_IMAGE.match(line)
+            if m and direct(m.group("ref")):
+                hit = m.group("ref")
+        if hit is None and STATEMENT.search(line):
+            image = positional(line[STATEMENT.search(line).start() :], bool(re.search(r"""["']docker["'],""", line)))
+            if image and direct(image) and REF.match(image):
+                hit = image
+        if hit:
+            found.append(f"{path}:{number}: {hit}: {line.strip()[:120]}")
+    return found
+
+
+DEFAULT_ROOTS = ["mise-tasks", "lib", "tools", "tests", "molecule", ".github/workflows", "MODULE.bazel"]
+
+
+def kind_ok(root, rel):
+    name = rel.rsplit("/", 1)[-1]
+    if rel.endswith((".md", ".markdown", ".j2")):
+        return False
+    if rel.endswith((".sh", ".bash", ".py", ".yml", ".yaml")) or name.startswith(("Dockerfile", "Containerfile")) or name == "MODULE.bazel":
+        return True
+    try:
+        with open(root / rel, "rb") as f:
+            first = f.readline(200)
+    except OSError:
+        return False
+    return first.startswith(b"#!") and bool(re.search(rb"(bash|/sh|python|uv run)", first))
+
+
+def main(argv):
+    root = Path(argv[1] if len(argv) > 1 else ".").resolve()
+    skip, allowed, problems = set(), [], []
+    manifest = root / ".github" / "shared-scripts"
+    if manifest.is_file():
+        skip = {p[1] for p in (ln.split() for ln in manifest.read_text().splitlines()) if len(p) >= 2 and not p[0].startswith("#")}
+    allow = root / ".github" / "image-registry-allowlist"
+    if allow.is_file():
+        for line in allow.read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            path, _, reason = line.strip().partition(" ")
+            if not reason.strip():
+                problems.append(f".github/image-registry-allowlist: '{path}' has no reason")
+            allowed.append(path)
+    roots = DEFAULT_ROOTS
+    paths = root / ".github" / "image-registry-paths"
+    if paths.is_file():
+        roots = [ln.strip() for ln in paths.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    tracked = subprocess.run(["git", "ls-files", "-z", "--", *roots], capture_output=True, check=True, cwd=root).stdout.decode().split("\0")
+    files = [
+        f
+        for f in tracked
+        if f
+        and f not in skip
+        and not re.match(r"^tests/[^/]+/(bad|good)/", f)
+        and not any(f == a or (a.endswith("/") and f.startswith(a)) for a in allowed)
+        and (root / f).is_file()
+        and kind_ok(root, f)
+    ]
+    found = []
+    for rel in files:
+        try:
+            found += violations(rel, (root / rel).read_text())
+        except UnicodeDecodeError:
+            continue
+    for p in problems:
+        print(f"image-registry-check: {p}", file=sys.stderr)
+    if found:
+        print(
+            "image-registry-check: direct Docker Hub / ghcr.io / quay.io / registry.k8s.io pulls"
+            " (use registry.cocreiamo.com/<dockerhub|ghcr|quay|k8s>/<repo>; official images are dockerhub/library/<name>):",
+            file=sys.stderr,
+        )
+        print("\n".join(found), file=sys.stderr)
+    if found or problems:
+        return 1
+    print("image-registry-check: every pull goes through registry.cocreiamo.com")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -53,7 +53,7 @@ git_repo "$tmp/v"
 )
 
 # a throwaway consumer installs it with mise at a pinned checksum
-port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+port=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 python3 -I -m http.server "$port" --bind 127.0.0.1 --directory "$tmp/rel" > "$tmp/server.log" 2>&1 &
 server=$!
 trap 'kill "$server" 2>/dev/null || true; rm -rf "$tmp"' EXIT

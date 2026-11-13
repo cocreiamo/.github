@@ -2,6 +2,6 @@ id: dotgithub/test/sync-founder-section.sh
 repo: dotgithub
 invariant: renovate/sync-founder-section.sh rewrites the founder section of a CLAUDE.md to the canonical text embedded in a
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/sync-founder-section.sh
 file: tests/sync-founder-section.sh

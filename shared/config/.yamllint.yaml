@@ -6,7 +6,6 @@ ignore: |
   platform/*/charts/
   platform/*/*.enc.yaml
   apps/*/*/*.enc.yaml
-  platform/traefik-config/plugins/
   tests/rendered/*-bad/
   tests/lint/bad/
   platform/gateway-api-crds/upstream/standard-install.yaml
@@ -20,8 +19,8 @@ ignore: |
 rules:
   line-length: disable
   document-start: disable
-  truthy: {check-keys: false}
-  comments: {min-spaces-from-content: 1}
+  truthy: { check-keys: false }
+  comments: { min-spaces-from-content: 1 }
   comments-indentation: disable
-  braces: {max-spaces-inside: 1}
-  indentation: {spaces: consistent, indent-sequences: consistent}
+  braces: { max-spaces-inside: 1 }
+  indentation: { spaces: consistent, indent-sequences: consistent }

@@ -1,3 +1,4 @@
+import atexit
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,9 +12,12 @@ PLAIN = (
     "command: mise run ci -- policy\nfile: tools/tests/bar.sh\n"
 )
 
+BASE = tempfile.TemporaryDirectory()
+atexit.register(BASE.cleanup)
+
 
 def repo(files, entries):
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp(dir=BASE.name))
     for rel in files:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("def check_x(a):\n")
@@ -39,7 +43,7 @@ class FitnessEntries(unittest.TestCase):
         self.assertIn("tools/policy/p.rego", found[0])
 
     def test_missing_directory_is_refused(self):
-        root = Path(tempfile.mkdtemp())
+        root = Path(tempfile.mkdtemp(dir=BASE.name))
         self.assertIn("docs/fitness-functions", run(root)[0])
 
     def test_entry_for_a_file_that_is_gone_is_refused(self):

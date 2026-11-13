@@ -1,7 +1,7 @@
 id: dotgithub/test/hermetic-tools.sh
 repo: dotgithub
-invariant: 'The shared hermetic-tools lexer (shared/scripts/hermetic_tools.py): a quoted parenthesis inside a command substitution, a one-line function after a separator, and the binaries a mise tool installs.'
+invariant: "The shared hermetic-tools lexer (shared/scripts/hermetic_tools.py): a quoted parenthesis inside a command substitution, a one-line function after a separator, and the binaries a mise tool installs."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/hermetic-tools.sh
 file: tests/hermetic-tools.sh

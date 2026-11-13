@@ -1,7 +1,7 @@
 id: dotgithub/test/pr-wait.sh
 repo: dotgithub
-invariant: 'pr:wait is the shared pr-wait.sh (a task of this repository too), its test and the check that no bare gh watch exists.'
+invariant: "pr:wait is the shared pr-wait.sh (a task of this repository too), its test and the check that no bare gh watch exists."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/pr-wait.sh
 file: tests/pr-wait.sh

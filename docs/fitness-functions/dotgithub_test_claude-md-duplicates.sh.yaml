@@ -1,0 +1,7 @@
+id: dotgithub/test/claude-md-duplicates.sh
+repo: dotgithub
+invariant: "No rule longer than 120 characters is carried by two repository CLAUDE.md files outside the shared section; claude-md-duplicates refuses the bad case."
+runs:
+  - pr-ci
+command: bash tests/claude-md-duplicates.sh
+file: tests/claude-md-duplicates.sh

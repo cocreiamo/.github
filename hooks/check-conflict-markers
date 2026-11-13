@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd "${1:-$(dirname "$0")/..}"
-if hits=$(git grep -nIE --untracked '^(<<<<<<<|>>>>>>>)( |$)'); then
-  echo "conflict markers left in:" >&2
-  echo "$hits" >&2
-  exit 1
-fi

@@ -12,23 +12,30 @@ step() { yq -N ".jobs.check.steps[] | select(.name == \"$1\") | $2" "$wf"; }
 tmpdir
 
 [ -d "$configs" ] || fail "$configs does not exist"
-bundle=$(step "vendored configs equal the canonical ones" .env.CONFIGS_BUNDLE)
-[ -n "$bundle" ] && [ "$bundle" != null ] || fail "$wf has no step 'vendored configs equal the canonical ones' with CONFIGS_BUNDLE"
 check=$(step "vendored configs equal the canonical ones" .run)
+bundle=$(step "vendored configs equal the canonical ones" '.env | to_entries | .[] | select(.key | test("^CONFIGS_BUNDLE_[0-9]+$")) | .value')
+[ -n "$bundle" ] || fail "$wf has no step 'vendored configs equal the canonical ones' whose env carries the keys CONFIGS_BUNDLE_1, CONFIGS_BUNDLE_2, ..."
 fetch=$(step "fetch the vendored scripts" .run)
 sparse=$(yq -N '.jobs.check.steps[] | select(.uses == "actions/checkout*") | .with."sparse-checkout"' "$wf")
 grep -qx '.github/shared-configs' <<<"$sparse" || fail "the sparse checkout does not include .github/shared-configs"
 
 mkdir "$tmp/embedded"
 base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
-diff -r "$configs" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from $configs: run tools/embed-scripts.sh"
+mkdir "$tmp/tracked"
+git ls-files -z -- "$configs" | while IFS= read -r -d '' f; do
+  mkdir -p "$(dirname "$tmp/tracked/${f#"$configs"/}")"
+  cp -p "$f" "$tmp/tracked/${f#"$configs"/}"
+done
+diff -r "$tmp/tracked" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from the tracked files of $configs (an untracked or ignored file must never be embedded): run tools/embed-scripts.sh"
 
 for name in gitignore .editorconfig .yamllint.yaml ruff.toml .shellcheckrc .gitleaks.toml .typos.toml .markdownlint-cli2.yaml .prettierrc.json .hadolint.yaml .vale.ini \
   .vale/styles/Cocreiamo/Banned.yml .vale/styles/Cocreiamo/EnglishOnly.yml; do
   [ -s "$configs/$name" ] || fail "$configs/$name is missing or empty"
 done
 
-run() { (cd "$1" && CONFIGS_BUNDLE="$bundle" bash -c "$check") >"$tmp/out" 2>&1; }
+printf '%s\n' "$check" > "$tmp/check.sh"
+set -a; eval "$(yq -N -o shell '.jobs.check.steps[] | select(.name == "vendored configs equal the canonical ones") | .env' "$wf")"; set +a
+run() { (cd "$1" && bash "$tmp/check.sh") >"$tmp/out" 2>&1; }
 mkrepo() {
   rm -rf "$tmp/repo"; mkdir -p "$tmp/repo/.github" "$tmp/repo/deep/er"
   cp "$configs/gitignore" "$tmp/repo/.gitignore"

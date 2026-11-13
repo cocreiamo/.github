@@ -2,6 +2,6 @@ id: dotgithub/test/community-files.sh
 repo: dotgithub
 invariant: The organization's default community health files (issue forms without labels, SECURITY.md naming the founder's address only) exist where GitHub reads them.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/community-files.sh
 file: tests/community-files.sh

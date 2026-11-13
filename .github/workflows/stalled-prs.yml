@@ -13,7 +13,9 @@
 #       secrets: {app-private-key: "${{ secrets.CLAUDE_CODE_PR_APP_PRIVATE_KEY }}"}
 # cleanup: true first empties the runner workspace (files a root container left behind need root to go: falls back to Docker).
 # alert: true (default) raises «main is red: stalled failed» through post-merge-alert.yml when the run fails; it needs the secret
-# app-private-key, the variable CLAUDE_CODE_PR_APP_ID of the caller and actions: read.
+# app-private-key and the variable CLAUDE_CODE_PR_APP_ID of the caller. The caller job grants every permission above, actions: read
+# included (the alert job reads the run's jobs): without it the run is a startup_failure, and workflow-pins-check.py refuses such a
+# caller before the merge.
 name: stalled-prs
 on:
   workflow_call:

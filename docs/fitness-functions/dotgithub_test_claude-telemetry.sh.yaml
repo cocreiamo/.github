@@ -1,7 +1,7 @@
 id: dotgithub/test/claude-telemetry.sh
 repo: dotgithub
-invariant: 'The committed .claude/settings.json sends Claude Code telemetry to otel.cocreiamo.com: every setting and the headers helper are required, and the check refuses each one missing.'
+invariant: "The committed .claude/settings.json sends Claude Code telemetry to otel.cocreiamo.com: every setting and the headers helper are required, and the check refuses each one missing."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/claude-telemetry.sh
 file: tests/claude-telemetry.sh

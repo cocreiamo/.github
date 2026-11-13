@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-#MISE description="Every shell script that calls mktemp installs an EXIT trap that removes what it made (allowlist: .github/mktemp-trap-allowlist; a path ending in / allowlists a directory)"
+#MISE description="Every shell script that calls mktemp installs an EXIT trap that removes what it made, every Python mkdtemp/mkstemp is removed in a finally or atexit (allowlist: .github/mktemp-trap-allowlist; a path ending in / allowlists a directory)"
 # mktemp-trap-check [repository root]: every shell script (a file whose first line is a bash/sh/env shebang, or *.sh) that calls mktemp (not -u) must
 # install `trap '<something that runs rm>' EXIT`: a test that leaves its tmp.* directory behind is a leak that grows until the disk is full.
+# Python: a file (*.py or a python shebang) that calls tempfile.mkdtemp, mkstemp or NamedTemporaryFile(delete=False) must remove it in a `finally:` block of the
+# same function (rmtree, unlink, remove, rmdir or a cleanup call), remove it in the tearDown or __exit__ of the same class, or register the removal with atexit,
+# weakref.finalize or a unittest addCleanup: a removal on the happy path only leaks
+# on every exception. TemporaryDirectory and NamedTemporaryFile used as context managers clean up by themselves and are not flagged.
+# The fixtures under tests/*/bad and tests/*/good are not checked.
 # Allowlist: <root>/.github/mktemp-trap-allowlist, one line per script, or per directory when the path ends in "/": "<path> <reason>" (a line without a reason is refused).
 # Prints the offenders and their count; exits 1 when there is one. Files come from `git ls-files` in a checkout, else from find.
 set -euo pipefail
@@ -27,16 +32,28 @@ fi
 
 if [ -e .git ]; then files() { git ls-files -z; }; else files() { find . -type f -not -path './.git/*' -print0 | sed -z 's|^\./||'; }; fi
 
+is_allowed() {
+  [ -z "${allowed[$1]:-}" ] || return 0
+  local p
+  for p in "${prefixes[@]}"; do case "$1" in "$p"*) return 0 ;; esac; done
+  return 1
+}
+
 offenders=()
+python_files=()
 while IFS= read -r -d '' f; do
   [ -f "$f" ] && [ ! -L "$f" ] || continue
+  case "$f" in tests/*/bad/* | tests/*/good/*) continue ;; esac
   [ -r "$f" ] || { echo "mktemp-trap-check: $f is not readable" >&2; bad=1; continue; }
-  head -c 200 "$f" 2> /dev/null | head -n 1 | grep -qE '^#!.*(bash|/sh|env sh|zsh)' || case "$f" in *.sh) ;; *) continue ;; esac
+  first=""
+  IFS= read -r -n 200 first < "$f" 2> /dev/null || [ -n "$first" ] || first=""
+  if [[ "$f" == *.py ]] || grep -qE '^#!.*python' <<< "$first"; then
+    if grep -qE 'mkdte[m]p|mkste[m]p|delete[[:space:]]*=[[:space:]]*False' "$f" && ! is_allowed "$f"; then python_files+=("$f"); fi
+    continue
+  fi
+  grep -qE '^#!.*(bash|/sh|env sh|zsh)' <<< "$first" || case "$f" in *.sh) ;; *) continue ;; esac
   grep -vE '^[[:space:]]*#' "$f" | grep -E '(^|[^[:alnum:]_-])mkte[m]p([[:space:]]|$|\))' | grep -qvE 'mkte[m]p[[:space:]]+(.* )?-[a-zA-Z]*u' || continue
-  [ -z "${allowed[$f]:-}" ] || continue
-  skip=0
-  for p in "${prefixes[@]}"; do case "$f" in "$p"*) skip=1 ;; esac; done
-  [ "$skip" = 0 ] || continue
+  ! is_allowed "$f" || continue
   trap_lines="$(grep -E '(^|[;&[:space:]])trap[[:space:]].*[[:space:]]EXIT([[:space:]]|$)' "$f" || [ $? -eq 1 ])"
   if [ -n "$trap_lines" ]; then
     grep -qE '\brm\b|cleanup|rmdir' <<< "$trap_lines" && continue
@@ -45,9 +62,104 @@ while IFS= read -r -d '' f; do
   offenders+=("$f")
 done < <(files)
 
+if [ "${#python_files[@]}" -gt 0 ]; then
+  py_out="$(python3 -I - "${python_files[@]}" << 'PY'
+import ast
+import sys
+
+REMOVERS = {"rmtree", "unlink", "remove", "rmdir", "cleanup"}
+
+
+def name(node):
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def creates(call):
+    n = name(call.func)
+    if n in {"mkdtemp", "mkstemp"}:
+        return True
+    if n == "NamedTemporaryFile":
+        return any(k.arg == "delete" and isinstance(k.value, ast.Constant) and k.value.value is False for k in call.keywords)
+    return False
+
+
+def removes(nodes):
+    for top in nodes:
+        for n in ast.walk(top):
+            if isinstance(n, ast.Call) and (name(n.func) in REMOVERS or "cleanup" in name(n.func)):
+                return True
+    return False
+
+
+def registered(tree):
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and name(n.func) in {"register", "finalize", "addCleanup", "addClassCleanup", "enterContext"}:
+            if any(name(a) in REMOVERS or "cleanup" in name(a) or removes([a]) for a in n.args):
+                return True
+    return False
+
+
+TEARDOWNS = {"tearDown", "tearDownClass", "teardown_method", "teardown_class", "__exit__", "__aexit__", "close", "cleanup"}
+
+
+def scopes(tree):
+    yield tree, False
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef):
+            torn = removes([m for m in cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name in TEARDOWNS])
+            for m in cls.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield m, torn
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield n, False
+
+
+def leaks(tree):
+    if registered(tree):
+        return False
+    torn_down = set()
+    for scope, torn in scopes(tree):
+        if torn:
+            torn_down.add(id(scope))
+        if id(scope) in torn_down:
+            continue
+        own = []
+        stack = list(ast.iter_child_nodes(scope))
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue
+            own.append(n)
+            stack.extend(ast.iter_child_nodes(n))
+        if not any(isinstance(n, ast.Call) and creates(n) for n in own):
+            continue
+        if not any(isinstance(n, ast.Try) and removes(n.finalbody) for n in own):
+            return True
+    return False
+
+
+for path in sys.argv[1:]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read(), path)
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as e:
+        print(f"{path} (unparsable: {e.__class__.__name__})")
+        continue
+    if leaks(tree):
+        print(path)
+PY
+)" || { echo "mktemp-trap-check: the Python check failed" >&2; exit 1; }
+  while IFS= read -r line; do [ -z "$line" ] || offenders+=("$line"); done <<< "$py_out"
+fi
+
 if [ "${#offenders[@]}" -gt 0 ]; then
   printf 'mktemp-trap-check: %s\n' "${offenders[@]}" >&2
-  echo "mktemp-trap-check: ${#offenders[@]} script(s) make temporary files without an EXIT trap that removes them (add the trap, or an allowlist line with a reason in .github/mktemp-trap-allowlist)" >&2
+  echo "mktemp-trap-check: ${#offenders[@]} script(s) make temporary files without removing them on every exit (add the EXIT trap, or a Python finally or atexit removal, or an allowlist line with a reason in .github/mktemp-trap-allowlist)" >&2
   exit 1
 fi
 [ "$bad" = 0 ] || exit 1

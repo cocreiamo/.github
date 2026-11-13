@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml==6.0.3"]
 # ///
-"""Four hygiene rules for .github/workflows/*.y*ml.
+"""Five hygiene rules for .github/workflows/*.y*ml.
 
 usage: workflow-hygiene-check.py [repository root]   (default: the working directory)
 
@@ -16,6 +16,10 @@ usage: workflow-hygiene-check.py [repository root]   (default: the working direc
 4. In a repository with the mise task `ci` (mise-tasks/ci/_default or [tasks.ci] in mise.toml), a workflow with a `pull_request`
    trigger runs its checks only as `mise run ci -- <part>`: a `run:` that calls another `mise run`, a script of tests/, hooks/
    or shared/scripts/, or `bash tests/...` defines a check a second time in YAML, where the pre-push hook and `affected` do not see it.
+5. No env value (workflow, job or step) is longer than 100000 bytes: the kernel caps one variable at 131072, and a step past it
+   never starts ("Argument list too long"); a large bundle is spread over several env keys.
+6. No `run:` script is longer than 60000 bytes: actionlint hands the script to shellcheck through a pipe and hangs past the
+   64 KiB pipe buffer, so the lint never ends; data belongs in env keys, code in a script file.
 
 The kind of a SHA never changes: it is cached in $WORKFLOW_HYGIENE_KINDS (default ~/.cache/workflow-hygiene/<owner>/<repo>/<sha>,
 content `commit` or `tag`), else read from the GitHub API with $GH_TOKEN, $GITHUB_TOKEN or `gh auth token`.
@@ -121,6 +125,10 @@ def ci_entry_problems(path, doc):
     return problems
 
 
+ENV_MAX = 100000
+RUN_MAX = 60000
+
+
 def check_workflow(path, ci_entry=False):
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     triggers = doc.get("on", doc.get(True))
@@ -135,6 +143,24 @@ def check_workflow(path, ci_entry=False):
             group = conc if isinstance(conc, str) else str((conc or {}).get("group", ""))
             if REF_KEY.search(group) and not UNIQUE_KEY.search(group):
                 problems.append(f"{path}: {where}: concurrency group {group!r} is keyed on the ref alone: queued pushes to one branch cancel each other; add github.sha or github.run_id")
+    envs = [("workflow", doc.get("env"))]
+    for name, job in jobs.items():
+        if isinstance(job, dict):
+            envs.append((f"job {name}", job.get("env")))
+            envs += [(f"job {name} step {i + 1}", st.get("env")) for i, st in enumerate(job.get("steps") or []) if isinstance(st, dict)]
+    for where, env in envs:
+        for key, value in (env or {}).items() if isinstance(env, dict) else []:
+            size = len(f"{key}={value}".encode())
+            if size > ENV_MAX:
+                problems.append(f"{path}: {where}: env {key} is {size} bytes, over {ENV_MAX}: spread it over several env keys")
+    for name, job in jobs.items():
+        for i, st in enumerate((job.get("steps") or []) if isinstance(job, dict) else []):
+            run = st.get("run") if isinstance(st, dict) else None
+            if isinstance(run, str) and len(run.encode()) > RUN_MAX:
+                problems.append(
+                    f"{path}: job {name} step {i + 1}: run script is {len(run.encode())} bytes, over {RUN_MAX}: "
+                    "move data into env keys and code into a script file"
+                )
     uses = []
     for name, job in jobs.items():
         if not isinstance(job, dict):

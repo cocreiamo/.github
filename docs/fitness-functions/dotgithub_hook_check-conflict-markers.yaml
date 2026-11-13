@@ -1,7 +1,0 @@
-id: dotgithub/hook/check-conflict-markers
-repo: dotgithub
-invariant: git hook check-conflict-markers
-runs:
-- local
-command: hooks/check-conflict-markers
-file: hooks/check-conflict-markers

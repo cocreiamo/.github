@@ -1,7 +1,7 @@
 id: dotgithub/test/light-jobs.sh
 repo: dotgithub
-invariant: 'A job asks for the light pool [self-hosted, cocreiamo-ci-light] only when .github/light-jobs lists it with a reason, and a listed job has no secret, no environment, no write permission and a short timeout. Every other job that has a runner stays on [self-hosted, cocreiamo-ci].'
+invariant: "A job asks for the light pool [self-hosted, cocreiamo-ci-light] only when .github/light-jobs lists it with a reason, and a listed job has no secret, no environment, no write permission and a short timeout. Every other job that has a runner stays on [self-hosted, cocreiamo-ci]."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/light-jobs.sh
 file: tests/light-jobs.sh

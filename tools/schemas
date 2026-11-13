@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# tools/schemas [root]: the workflows, the issue forms and their config, and the Renovate configs against the schemas check-jsonschema
+# vendors (SchemaStore, no network). renovate-config-validator stays the strict check of the Renovate options.
+set -euo pipefail
+root=${1:-.}
+cd "$root"
+forms=()
+for f in .github/ISSUE_TEMPLATE/*.yml; do [ "${f##*/}" = config.yml ] || forms+=("$f"); done
+check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+[ "${#forms[@]}" -eq 0 ] || check-jsonschema --builtin-schema vendor.github-issue-forms "${forms[@]}"
+[ ! -f .github/ISSUE_TEMPLATE/config.yml ] || check-jsonschema --builtin-schema vendor.github-issue-config .github/ISSUE_TEMPLATE/config.yml
+check-jsonschema --builtin-schema vendor.renovate default.json renovate.json renovate/default.json

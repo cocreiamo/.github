@@ -1,7 +1,7 @@
 id: dotgithub/test/workflow-pins.sh
 repo: dotgithub
-invariant: 'A caller of a reusable workflow, pinned by SHA, passes only the inputs and secrets the workflow declares at that SHA and every required one; the check is proven red on an unknown input, an unknown or missing secret, a missing required input and the commit that broke main.'
+invariant: "A caller of a reusable workflow, pinned by SHA, passes only the inputs and secrets the workflow declares at that SHA and every required one; the check is proven red on an unknown input, an unknown or missing secret, a missing required input and the commit that broke main."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/workflow-pins.sh
 file: tests/workflow-pins.sh

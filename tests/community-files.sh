@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The organization's default community health files exist where GitHub reads them (.github/ of the .github repository), the issue templates are valid
-# forms that use no label (a label must exist in every repository), and the security policy names the founder's address only.
+# forms that use no label (a label must exist in every repository), the security policy names the founder's address only, and
+# CODEOWNERS gives every path to the founder, as in the other repositories.
 set -euo pipefail
 # shellcheck source=../shared/scripts/testlib.sh
 . "$(dirname "$0")/../shared/scripts/testlib.sh"
@@ -24,4 +25,6 @@ done
 [ "$count" -ge 2 ] || fail "want at least two issue templates, found $count"
 [ "$(yq -N '.contact_links | length' .github/ISSUE_TEMPLATE/config.yml)" -ge 1 ] || fail "config.yml has no contact link"
 if grep -rqi 'gmail\|@example' .github/SECURITY.md .github/ISSUE_TEMPLATE; then fail "a community file names a foreign address"; fi
+[ -f .github/CODEOWNERS ] || fail ".github/CODEOWNERS is missing: every repository names its owner"
+grep -qxE '\*[[:space:]]+@iambilotta' .github/CODEOWNERS || fail ".github/CODEOWNERS does not give every path to @iambilotta"
 echo "community-files ok"

@@ -2,6 +2,6 @@ id: dotgithub/test/pr-title.sh
 repo: dotgithub
 invariant: The title check must keep the agreed types and never allow `test`.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/pr-title.sh
 file: tests/pr-title.sh

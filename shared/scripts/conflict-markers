@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Refuse git conflict markers (a line starting with <<<<<<< or >>>>>>>) in tracked and untracked files; a lone ======= is valid in Markdown and in vendored sources; a directory in .github/conflict-markers-allowlist (\"<path>/ <reason>\") is not checked"
+set -euo pipefail
+cd "${1:-$(git rev-parse --show-toplevel)}"
+exclude=()
+allow=.github/conflict-markers-allowlist
+if [ -f "$allow" ]; then
+  while read -r path reason; do
+    case "$path" in '' | '#'*) continue ;; esac
+    [ -n "$reason" ] || {
+      echo "$allow: '$path' has no reason" >&2
+      exit 1
+    }
+    exclude+=(":!$path")
+  done <"$allow"
+fi
+if hits=$(git grep -nIE --untracked '^(<<<<<<<|>>>>>>>)( |$)' -- . "${exclude[@]}"); then
+  echo "conflict markers left in:" >&2
+  echo "$hits" >&2
+  exit 1
+fi

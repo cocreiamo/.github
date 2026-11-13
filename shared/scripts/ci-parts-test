@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ci-parts (shared/scripts, or its vendored copy named in .github/shared-scripts): `affected` picks the parts from the `sources`
 # of the ci:<part> mise tasks and the files changed since the base (an excluded file, a docs-only change, no base), `prepush` runs
-# exactly those, `check` refuses a part that would not run when it changes, a ci: task `affected` can never select, and a
-# workflow that calls a part that does not exist.
+# exactly those but a part described `ci-only:` (heavy: the CI runs it, a named run too), `check` refuses a part that would not
+# run when it changes, a ci: task `affected` can never select, and a workflow that calls a part that does not exist.
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 parts="$repo/shared/scripts/ci-parts"
@@ -84,15 +84,17 @@ rm -f .github/workflows/w.yml; unset CI_PARTS_TASKS
 printf '#!/usr/bin/env bash\n#MISE description="the entry point"\nexec %s "$@"\n' "$parts" > mise-tasks/ci/_default
 printf '#!/usr/bin/env bash\n#MISE description="lint"\n#MISE sources=["docs/**","mise-tasks/ci/lint"]\necho lint >> "$MARK"\n' > mise-tasks/ci/lint
 printf '#!/usr/bin/env bash\n#MISE description="render"\n#MISE sources=["platform/**","mise-tasks/ci/render"]\necho render >> "$MARK"\n' > mise-tasks/ci/render
+printf '#!/usr/bin/env bash\n#MISE description="ci-only: builds an image"\n#MISE sources=["platform/**","mise-tasks/ci/heavy"]\necho heavy >> "$MARK"\n' > mise-tasks/ci/heavy
 chmod +x mise-tasks/ci/*
 git add -A && "$vcs" commit -qm tasks && base=$(git rev-parse HEAD)
 export MARK="$tmp/mark"
 got=$(CI_BASE="$base" mise run ci -- affected 2>/dev/null | tr '\n' ' '); want "mise run ci -- affected with no change" ""
 printf x >> platform/z/f && "$vcs" commit -qam z
-got=$(CI_BASE="$base" mise run ci -- affected 2>/dev/null | tr '\n' ' '); want "mise run ci -- affected through the real mise" "render "
+got=$(CI_BASE="$base" mise run ci -- affected 2>/dev/null | tr '\n' ' '); want "mise run ci -- affected through the real mise (a ci-only part included: the CI runs it)" "heavy render "
 : > "$MARK"
-CI_BASE="$base" mise run ci -- prepush > /dev/null 2>&1 || fail "prepush failed"
-[ "$(tr '\n' ' ' < "$MARK")" = "render " ] || fail "prepush ran '$(tr '\n' ' ' < "$MARK")', want only render"
+CI_BASE="$base" mise run ci -- prepush > "$tmp/prepush.out" 2>&1 || { cat "$tmp/prepush.out" >&2; fail "prepush failed"; }
+[ "$(tr '\n' ' ' < "$MARK")" = "render " ] || fail "prepush ran '$(tr '\n' ' ' < "$MARK")', want only render (heavy is ci-only)"
+grep -q 'left to the CI: heavy' "$tmp/prepush.out" || { cat "$tmp/prepush.out" >&2; fail "prepush does not say which ci-only parts it left to the CI"; }
 : > "$MARK"
 CI_BASE="$base" mise run ci -- prepush 2>&1 | grep -q 'already passed' || fail "a second prepush of the same clean tree ran the parts again"
 [ ! -s "$MARK" ] || fail "a second prepush of the same clean tree ran '$(cat "$MARK")'"
@@ -106,6 +108,9 @@ git checkout -q -- platform/z/f
 : > "$MARK"
 mise run ci -- lint render > /dev/null 2>&1 || fail "named parts failed"
 [ "$(tr '\n' ' ' < "$MARK")" = "lint render " ] || fail "named parts ran '$(tr '\n' ' ' < "$MARK")'"
+: > "$MARK"
+mise run ci -- heavy > /dev/null 2>&1 || fail "a ci-only part named on the command line failed"
+[ "$(tr '\n' ' ' < "$MARK")" = "heavy " ] || fail "a ci-only part named on the command line did not run"
 if mise run ci -- nosuch > /dev/null 2>&1; then fail "a part that does not exist was accepted"; fi
 mise run ci -- check 2>"$tmp/err" || { cat "$tmp/err" >&2; fail "check refused the real set of parts"; }
 echo "ci-parts ok"

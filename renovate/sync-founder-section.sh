@@ -20,6 +20,14 @@ block() {
     $0 ~ "^ +" key ": \\|-$" { f = 1; match($0, /^ */); ind = RLENGTH + 2 }
   ' <<<"$workflow"
 }
+# chunks <name>: the bundle spread over the block scalars <name>_1, <name>_2, ... (one env value is capped by the kernel)
+chunks() {
+  local k=1
+  while grep -qE "^ +$1_$k: \|-$" <<<"$workflow"; do
+    block "$1_$k"
+    k=$((k + 1))
+  done
+}
 canonical=$(block CANONICAL)
 [ "${canonical%%$'\n'*}" = "$heading" ] || { echo "no canonical section in shared-rules.yml" >&2; exit 1; }
 grep -qx "$heading" CLAUDE.md || { echo "CLAUDE.md has no '$heading' section" >&2; exit 1; }
@@ -38,7 +46,7 @@ vendor() {
   local manifest=$1 key=$2 re=$3 name path _
   [ -f "$manifest" ] || return 0
   mkdir -p "$canon/$key"
-  block "$key" | base64 -d | tar -xzf - -C "$canon/$key"
+  chunks "$key" | base64 -d | tar -xzf - -C "$canon/$key"
   while read -r name path _; do
     case ${name:-} in ''|'#'*) continue ;; esac
     [[ $name =~ $re ]] && [ -f "$canon/$key/$name" ] && [ -n "${path:-}" ] || { echo "$manifest: bad line: $name ${path:-}" >&2; exit 1; }

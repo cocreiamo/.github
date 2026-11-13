@@ -5,5 +5,6 @@
 # The reason: GitHub has no job priority, so a seconds-long required check waited behind 15-minute jobs on the six
 # ordinary slots (19 runs queued on 2026-11-06); GitHub-hosted minutes are not an option (the free quota is used up).
 pr-title.yml check required PR-title check, about 10 seconds, pull-requests read only
+pr-rules.yml check required pr-rules check, a git log over the PR commits in seconds, contents read only
 shared-rules.yml check required CLAUDE.md and vendored-scripts check, about 15 seconds, contents read only
 check.yml ci required aggregator, about 5 seconds, no permissions

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="lint-baseline on a throwaway repository: shellcheck and shfmt, ruff check and format, yamllint --strict and gitleaks each refuse their bad case, only tracked files count, vendored copies and tests/*/bad|good fixtures are skipped, and one part never fails for another"
+#MISE description="lint-baseline on a throwaway repository: shellcheck and shfmt, ruff check and format, yamllint --strict, prettier --check and gitleaks each refuse their bad case, only tracked files count, vendored copies and tests/*/bad|good fixtures are skipped, and one part never fails for another"
 # lint-baseline-test [path of lint-baseline]: the default is the copy next to this script (a vendored copy sits wherever .github/shared-scripts puts it).
-# Needs shellcheck, shfmt, ruff, yamllint and gitleaks on PATH.
+# Needs shellcheck, shfmt, ruff, yamllint, prettier and gitleaks on PATH.
 # shellcheck disable=SC1091,SC2154,SC2016 # the library is a sibling file; $tmp comes from it; the fixtures are single-quoted on purpose
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -9,7 +9,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 check=${1:-$here/lint-baseline}
 [ -x "$check" ] || fail "no executable lint-baseline at $check"
 check=$(cd "$(dirname "$check")" && pwd)/$(basename "$check")
-for t in shellcheck shfmt ruff yamllint gitleaks; do command -v "$t" >/dev/null || fail "$t is not on PATH"; done
+for t in shellcheck shfmt ruff yamllint prettier gitleaks; do command -v "$t" >/dev/null || fail "$t is not on PATH"; done
 tmpdir
 G=git
 secret="token = \"$(printf '%s%s' ghp_ R7hK2mQ9xT4vB8nL1cZ5wY3pD6sF0jG2aE9u)\""
@@ -38,7 +38,7 @@ bad() { # <label> <part> [text the output names]
 }
 
 fresh
-for part in shell python yaml secrets all --fast; do ok "$part"; done
+for part in shell python yaml format secrets all --fast; do ok "$part"; done
 
 fresh; printf '#!/usr/bin/env bash\necho $1\n' | add tools/bad.sh
 bad "shellcheck" shell tools/bad.sh
@@ -56,6 +56,16 @@ fresh; printf 'a: 1 \n' | add conf/bad.yaml
 bad "yamllint" yaml conf/bad.yaml
 fresh; printf 'a: 1\n' | add conf/bad.yml; printf 'x: [\n' | add conf/broken.yml
 bad "a broken .yml" yaml conf/broken.yml
+fresh; printf 'a:   1\nb:\n    - x\n' | add conf/ugly.yaml
+bad "prettier on YAML" format conf/ugly.yaml
+fresh; printf '#  Title\n\n* item\n' | add docs/ugly.md
+bad "prettier on Markdown" format docs/ugly.md
+fresh; printf '{"a":1,\n"b":[1,2]}\n' | add conf/ugly.json
+bad "prettier on JSON" format conf/ugly.json
+fresh; printf 'const a = {b:1}\n' | add web/ugly.js
+bad "prettier on JS" format web/ugly.js
+fresh; printf '{"printWidth": 20}\n' | add .prettierrc.json; printf 'a: [one, two, three, four]\n' | add conf/wide.yaml
+bad "prettier with the repository's own config" format conf/wide.yaml
 fresh; printf '%s\n' "$secret" | add conf/leak.txt
 bad "gitleaks" secrets conf/leak.txt
 
@@ -72,7 +82,7 @@ fresh; printf '#!/usr/bin/env bash\necho $1\n' | add ansible/files/run.sh.j2x
 bad "a shebang file whose suffix only looks like a template" shell ansible/files/run.sh.j2x
 
 fresh; printf 'import os\n' | add lib/bad.py
-for part in shell yaml secrets; do ok "$part"; done
+for part in shell yaml format secrets; do ok "$part"; done
 fresh; printf '#!/usr/bin/env bash\necho $1\n' | add tools/bad.sh
 for part in python yaml secrets; do ok "$part"; done
 if run all; then fail "all accepted a bad shell script"; fi
@@ -90,8 +100,10 @@ for kind in bad good; do
   printf '#!/usr/bin/env bash\necho $1\n' | add "tests/x/$kind/f.sh"
   printf 'import os\n' | add "tests/x/$kind/f.py"
   printf 'a: 1 \n' | add "tests/x/$kind/f.yaml"
+  printf 'a:   1\n' | add "tests/x/$kind/g.json"
 done
-for part in shell python yaml; do ok "$part"; done
+printf '{{ if .x }}\na:   1\n{{ end }}\n' | add charts/t/templates/cm.yaml.tpl
+for part in shell python yaml format; do ok "$part"; done
 
 fresh; rm "$tmp/r/lib/good.py" "$tmp/r/conf/good.yaml"
 ok all

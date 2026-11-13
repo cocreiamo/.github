@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""comment-hygiene [--diff <file> | --all] [repository root]: comments say why, never where a decision is filed or what changed.
+
+Refused in a whole-line comment (`#` in shell, Python, YAML, TOML, HCL, Rego, Dockerfiles; `//` in Go, JS, TS, HCL):
+  - a reference to a decision record, an issue, a ticket or a pull request: ADR-0042, `issue 12`, `#123`, a link to an
+    issue or pull request of the cocreiamo organization (the comment must carry the reason itself);
+  - history: a date next to added/changed/removed/since, `previously`, `formerly`, `used to be`, `was renamed`
+    (git keeps history, the comment states what is true now);
+  - commented-out code: a comment whose whole text is a statement (an import, a def, a one-token assignment, a call, a
+    shell keyword line), the dead code stays in git. PEP 723 script metadata and tool directives are not comments here.
+By default only the lines a pull request adds are read (`git diff -U0 ${COMMENT_HYGIENE_BASE:-origin/main}...HEAD`, or the
+unified diff of --diff, `-` for stdin), so a check never blocks on old debt; --all reads every tracked file. Skipped: the
+fixtures under tests/*/bad and tests/*/good, the vendored copies of .github/shared-scripts, the paths of
+.github/comment-hygiene-allowlist (`<path> <reason>`, a path ending in / for a directory; a line without a reason is
+refused) and a line that carries `comment-hygiene: allow <reason>`. Prints path:line: rule: text, and the count; exits 1 when there is one.
+"""
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+HASH = {".sh", ".bash", ".py", ".yaml", ".yml", ".toml", ".tf", ".hcl", ".rego", ".cfg", ".ini", ".conf", ".j2"}
+SLASH = {".go", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".tf", ".hcl", ".bzl", ".bazel"}
+DIRECTIVE = re.compile(
+    r"^(!|shellcheck |noqa|type:|pragma|nosec|fmt:|ruff:|pylint:|MISE |\[MISE\]|yaml-language-server|syntax=|escape=|"
+    r"check=|python-isolated:|git-env-cleared:|comment-hygiene:|eslint|prettier-ignore|@ts-|go:|nolint|tflint-|trivy:|kics|checkov:|"
+    r"renovate:|x-release-please|zizmor:|codespell|typos:|spellchecker:|///|dependencies\s*=|requires-python\s*=|\[tool\.)"
+)
+RULES = [
+    ("reference", re.compile(r"\bADR[- ]?\d{1,4}\b", re.I)),
+    ("reference", re.compile(r"\b(issue|ticket|pull request|PR)\s+#?\d+\b", re.I)),
+    ("reference", re.compile(r"(^|[\s(])#\d+\b")),
+    ("reference", re.compile(r"github\.com/cocreiamo/[^/\s]+/(issues|pull)/\d+")),
+    ("history", re.compile(r"\b(added|changed|removed|introduced|updated|since|fixed)\b[^.]{0,30}\b20\d\d-\d\d(-\d\d)?\b", re.I)),
+    ("history", re.compile(r"\b(previously|formerly|used to be|was renamed|we used to)\b", re.I)),
+    (
+        "commented-out code",
+        re.compile(
+            r"^(import [\w.]+( as \w+)?$|from [\w.]+ import [\w, ]+$|def \w+\(.*\):$|class \w+(\(.*\))?:$|return [\w.()\[\]]+$|"
+            r"print\(.*\)$|echo [\"'$].*|export [A-Z_]+=\S+$|local \w+=\S+$|if \[.*\]; then$|fi$|done$|esac$|"
+            r"[\w.\[\]\"']+\s*=\s*[^\s]+$|[\w.]+\([^()]*\);?$|resource \"|module \"|[})\]];?$)"
+        ),
+    ),
+]
+ALLOW = re.compile(r"comment-hygiene:\s*allow\b(.*)$")
+
+
+def comment_text(path, line):
+    suffix = pathlib.PurePath(path).suffix
+    name = pathlib.PurePath(path).name
+    stripped = line.strip()
+    hash_lang = suffix in HASH or name in {"Dockerfile", "Containerfile", "Makefile", "mise.toml", ".envrc"} or "." not in name
+    if hash_lang and stripped.startswith("#") and not stripped.startswith("#!"):
+        return stripped[1:].strip()
+    if suffix in SLASH and stripped.startswith("//"):
+        return stripped[2:].strip()
+    return None
+
+
+def findings(path, n, line):
+    allow = ALLOW.search(line)
+    if allow:
+        return [] if allow.group(1).strip() else [f"{path}:{n}: allow marker without a reason"]
+    text = comment_text(path, line)
+    if not text or DIRECTIVE.match(text):
+        return []
+    for rule, pattern in RULES:
+        if pattern.search(text):
+            return [f"{path}:{n}: {rule}: {line.strip()}"]
+    return []
+
+
+def allowlist(root):
+    paths, problems = set(), []
+    f = root / ".github" / "comment-hygiene-allowlist"
+    if f.is_file():
+        for line in f.read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            path, _, reason = line.strip().partition(" ")
+            if not reason.strip():
+                problems.append(f".github/comment-hygiene-allowlist: '{path}' has no reason")
+            paths.add(path)
+    return paths, problems
+
+
+def excluded(path, vendored):
+    return (
+        bool(re.match(r"^tests/[^/]+/(bad|good)/", path))
+        or path in vendored
+        or any(path == a or (a.endswith("/") and path.startswith(a)) for a in ALLOWED)
+    )
+
+
+ALLOWED = set()
+
+
+def skipped(root, path, vendored):
+    if excluded(path, vendored):
+        return True
+    p = root / path
+    return not p.is_file() or p.is_symlink()
+
+
+def vendored_copies(root):
+    manifest = root / ".github" / "shared-scripts"
+    if not manifest.is_file():
+        return set()
+    return {
+        parts[1] for parts in (ln.split() for ln in manifest.read_text().splitlines()) if len(parts) >= 2 and not parts[0].startswith("#")
+    }
+
+
+def added_lines(diff):
+    path, n = None, 0
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            path = None if target == "/dev/null" else re.sub(r"^b/", "", target)
+        elif line.startswith("@@"):
+            m = re.match(r"^@@ -\d+(,\d+)? \+(\d+)", line)
+            n = int(m.group(2)) if m else 0
+        elif path and line.startswith("+") and not line.startswith("+++"):
+            yield path, n, line[1:]
+            n += 1
+        elif path and line.startswith(" "):
+            n += 1
+
+
+def main(argv):
+    args = argv[1:]
+    mode, diff_file = "diff", None
+    if args[:1] == ["--all"]:
+        mode, args = "all", args[1:]
+    elif args[:1] == ["--diff"]:
+        diff_file, args = args[1], args[2:]
+    root = pathlib.Path(args[0] if args else ".").resolve()
+    vendored = vendored_copies(root)
+    allowed, out = allowlist(root)
+    ALLOWED.update(allowed)
+    if mode == "all":
+        files = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout.decode().split("\0")
+        for path in filter(None, files):
+            if skipped(root, path, vendored):
+                continue
+            try:
+                lines = (root / path).read_text(encoding="utf-8").splitlines()
+            except UnicodeDecodeError:
+                continue
+            for n, line in enumerate(lines, 1):
+                out += findings(path, n, line)
+    else:
+        if diff_file == "-":
+            diff = sys.stdin.read()
+        elif diff_file:
+            diff = pathlib.Path(diff_file).read_text()
+        else:
+            base = os.environ.get("COMMENT_HYGIENE_BASE", "origin/main")
+            diff = subprocess.run(
+                ["git", "-C", str(root), "diff", "-U0", f"{base}...HEAD"], capture_output=True, check=True, text=True
+            ).stdout
+        for path, n, line in added_lines(diff):
+            if not excluded(path, vendored):
+                out += findings(path, n, line)
+    for o in out:
+        print(f"comment-hygiene: {o}", file=sys.stderr)
+    if out:
+        print(
+            f"comment-hygiene: {len(out)} comment(s) that cite a record, tell history or keep dead code"
+            " (say the why in the comment, or delete it; `comment-hygiene: allow <reason>` on the line for an exception)",
+            file=sys.stderr,
+        )
+        return 1
+    print("comment-hygiene: every comment checked says why")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

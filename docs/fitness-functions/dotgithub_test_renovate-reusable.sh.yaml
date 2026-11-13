@@ -2,6 +2,6 @@ id: dotgithub/test/renovate-reusable.sh
 repo: dotgithub
 invariant: The nightly Renovate is one reusable workflow for every repository; extra-env can only add RENOVATE_ variables the workflow does not set, and a failed run alerts the founder.
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/renovate-reusable.sh
 file: tests/renovate-reusable.sh

@@ -1,12 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "cocreiamo defaults: every repository extends github>cocreiamo/.github",
-  "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    ":semanticCommits"
-  ],
+  "description": "cocreiamo defaults: every repository extends github>cocreiamo/.github; updates open in the nightly window (01:00-06:59 Europe/Rome, the run is at 03:17), security fixes at any time",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
   "timezone": "Europe/Rome",
+  "schedule": ["* 1-6 * * *"],
   "dependencyDashboard": true,
   "platformAutomerge": true,
   "minimumReleaseAge": "3 days",
@@ -62,7 +59,13 @@
       "automergeType": "pr"
     },
     {
-      "description": "Our own reusable workflows follow main, every ref of a repository in one PR (pins-consistent refuses two SHAs): any bump of the pin merges once the checks are green, and the CLAUDE.md and the vendored scripts of the repository are rewritten to the canonical ones of the new pin so that rules / check passes.",
+      "description": "Majors stay pull requests for a review, with the changelog in the body.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "fetchChangeLogs": "pr"
+    },
+    {
+      "description": "Our own reusable workflows follow main at any hour, outside the window, every ref of a repository in one PR (pins-consistent refuses two SHAs): any bump of the pin merges once the checks are green, and the CLAUDE.md and the vendored scripts of the repository are rewritten to the canonical ones of the new pin so that rules / check passes.",
       "matchManagers": ["github-actions"],
       "matchDepNames": ["cocreiamo/.github"],
       "groupName": "cocreiamo/.github pin",
@@ -75,7 +78,8 @@
         ],
         "fileFilters": ["**"],
         "executionMode": "branch"
-      }
+      },
+      "schedule": ["at any time"]
     }
   ]
 }

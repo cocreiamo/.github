@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#MISE description="Sign a pushed image keyless and attach the CycloneDX SBOM and the SLSA provenance the cluster requires: image-sign REF TARGET [BUILDER]; image-sign verify REF IDENTITY exits 0 when REF already carries the signature of IDENTITY and both attestations"
+# Every registry call goes through harbor-retry (next to this script). cosign 3 stores the signature and the attestations as Sigstore bundles
+# in OCI referrers, which Harbor lists as accessories and does not scan; a tag-scheme .att would be an ordinary artifact that Harbor scans
+# and prevent_vul then blocks, so cosign's defaults are kept.
+# verify: an image Harbor already holds under this digest, signed by IDENTITY with both attestations, is what the cluster would verify;
+# signing it again only piles referrers onto the same digest (every one costs Kyverno a manifest GET at admission). Any doubt (a missing
+# signature, an attestation, a Harbor error) exits non-zero, which means publish.
+# The provenance names the workflow run from the GITHUB_* variables of the job and the builder (bazel by default, docker for a product image).
+set -euo pipefail
+retry="$(dirname "$(realpath "$0")")/harbor-retry"
+issuer="https://token.actions.githubusercontent.com"
+
+if [ "${1:-}" = verify ]; then
+  ref="${2:?usage: image-sign verify REF IDENTITY}"
+  identity="${3:?usage: image-sign verify REF IDENTITY}"
+  export HARBOR_SUBJECT="$ref" HARBOR_SCAN_TIMEOUT_SECONDS=120
+  "$retry" "signature check" cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$ref" >/dev/null 2>&1 || exit 1
+  for type in cyclonedx slsaprovenance1; do
+    "$retry" "$type attestation check" cosign verify-attestation --type "$type" --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$ref" >/dev/null 2>&1 || exit 1
+  done
+  exit 0
+fi
+
+ref="${1:?usage: image-sign REF TARGET [BUILDER]}"
+target="${2:?usage: image-sign REF TARGET [BUILDER]}"
+builder="${3:-bazel}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+export HARBOR_SUBJECT="$ref"
+"$retry" signature cosign sign --yes "$ref"
+"$retry" "SBOM generation" syft "$ref" -o cyclonedx-json --file "$work/sbom.cdx.json"
+"$retry" "SBOM attestation" cosign attest --yes --type cyclonedx --predicate "$work/sbom.cdx.json" "$ref"
+jq -n '{
+  buildDefinition: {
+    buildType: "https://github.com/\(env.GITHUB_REPOSITORY // "cocreiamo/cocreiamo")/\($builder)@v1",
+    externalParameters: {workflow: env.GITHUB_WORKFLOW_REF, target: $target},
+    resolvedDependencies: [{
+      uri: "git+\(env.GITHUB_SERVER_URL)/\(env.GITHUB_REPOSITORY)@\(env.GITHUB_REF)",
+      digest: {gitCommit: env.GITHUB_SHA}
+    }]
+  },
+  runDetails: {
+    builder: {id: "\(env.GITHUB_SERVER_URL)/\(env.GITHUB_REPOSITORY)/actions/runs/\(env.GITHUB_RUN_ID)"},
+    metadata: {invocationId: env.GITHUB_RUN_ID}
+  }
+}' --arg target "$target" --arg builder "$builder" >"$work/provenance.json"
+"$retry" "provenance attestation" cosign attest --yes --type slsaprovenance1 --predicate "$work/provenance.json" "$ref"

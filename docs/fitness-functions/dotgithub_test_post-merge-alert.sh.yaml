@@ -1,7 +1,7 @@
 id: dotgithub/test/post-merge-alert.sh
 repo: dotgithub
-invariant: 'post-merge-alert.yml: a red job on main that must not be reverted (a publish) opens one issue per failing job, or comments on the one already open, with the run link and the failing lines; nothing here ever reverts.'
+invariant: "post-merge-alert.yml: a red job on main that must not be reverted (a publish) opens one issue per failing job, or comments on the one already open, with the run link and the failing lines; nothing here ever reverts."
 runs:
-- pr-ci
+  - pr-ci
 command: bash tests/post-merge-alert.sh
 file: tests/post-merge-alert.sh

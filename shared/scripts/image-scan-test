@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# image-scan (shared/scripts, or its vendored copy next to testlib.sh) with a stub trivy: a target with a critical finding refuses the
+# whole push and names the policy, a clean one passes, an OCI layout is scanned from a copy with its symlinked blobs resolved, prepare
+# retries the DB download and gives up after five attempts, and the usage errors are refused. No registry, no network.
+# shellcheck disable=SC1091,SC2154,SC2016 # the library is a sibling file; $tmp comes from it; the stubs are script text
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/testlib.sh"
+scan="$here/image-scan"
+tmpdir
+export tmp
+stub_bin trivy '
+after() { local k=$1; shift; while [ $# -gt 1 ]; do [ "$1" = "$k" ] && { echo "$2"; return; }; shift; done; }
+echo "trivy $*" >> "$tmp/trivy.log"
+case "$*" in
+*--download-db-only*) n=$(( $(cat "$tmp/db" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$tmp/db"; [ "$n" -gt "${DB_FAILS:-0}" ] ;;
+*--input*) layout=$(after --input "$@"); [ ! -L "$layout/blobs/b" ] && [ -f "$layout/blobs/b" ] || { echo "symlinked blob" >&2; exit 2; } ;;
+*bad*) echo "CRITICAL CVE-2026-0001" >&2; exit 1 ;;
+esac'
+stub_bin sleep 'true'
+
+"$scan" app clean:1 > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "a clean target was refused"; }
+if "$scan" app clean:1 bad:2 > "$tmp/out" 2>&1; then fail "a target with a critical finding passed"; fi
+grep -qF "prevent_vul" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not name Harbor's policy"; }
+grep -qF -- "--severity CRITICAL" "$tmp/trivy.log" || fail "the scan does not gate on CRITICAL: $(cat "$tmp/trivy.log")"
+
+mkdir -p "$tmp/store" "$tmp/layout/blobs"
+echo layer > "$tmp/store/b"
+ln -s "$tmp/store/b" "$tmp/layout/blobs/b"
+"$scan" app "$tmp/layout" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "a layout with a symlinked blob was not scanned from a resolved copy"; }
+
+rm -f "$tmp/db"
+DB_FAILS=2 "$scan" prepare > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "prepare gave up before five attempts"; }
+[ "$(cat "$tmp/db")" = 3 ] || fail "prepare made $(cat "$tmp/db") attempts, not 3"
+rm -f "$tmp/db"
+if DB_FAILS=9 "$scan" prepare > "$tmp/out" 2>&1; then fail "prepare passed with no DB"; fi
+[ "$(cat "$tmp/db")" = 5 ] || fail "prepare made $(cat "$tmp/db") attempts, not 5"
+
+if "$scan" > "$tmp/out" 2>&1; then fail "ran without a name"; fi
+if "$scan" app > "$tmp/out" 2>&1; then fail "ran without a target"; fi
+echo "image-scan: ok"

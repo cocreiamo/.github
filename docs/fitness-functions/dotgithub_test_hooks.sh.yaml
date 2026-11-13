@@ -1,0 +1,7 @@
+id: dotgithub/test/hooks.sh
+repo: dotgithub
+invariant: "Every repository runs one hook manager, the pre-commit framework, with the shared hooks and nothing installed outside it; hooks-check refuses the bad case."
+runs:
+  - pr-ci
+command: bash tests/hooks.sh
+file: tests/hooks.sh
