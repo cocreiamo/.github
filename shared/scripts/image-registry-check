@@ -3,16 +3,19 @@
 
 Docker Hub answers 429 to the shared CI runner and the registries refuse what is private, so every pull goes through the Harbor proxy
 caches of registry.cocreiamo.com (dockerhub/, ghcr/, quay/, k8s/). Read: the tracked shell, Python, YAML and Dockerfile files. A
-reference is caught in a docker run/create/pull statement, a keyed `image:`/`FROM` line, a quoted literal, or the assignment of an
-image variable (a name with image, img, container or ref in it, or a value with a repository path and a tag), and the `image` of a
-Bazel `oci.pull` in MODULE.bazel (its tag and digest are separate attributes, so a bare name is caught too). A reference without
-a registry host counts only with a Docker Hub shape (`[namespace/]repository`, the namespace a Docker ID or `library`, no source
-file name), so a path:line literal is not one. A line may vouch for a direct pull with `registry-ok: <why>` (on it or the line
-above). Skipped: Markdown, the fixtures under tests/*/bad and tests/*/good, the vendored copies of .github/shared-scripts and the
-paths of .github/image-registry-allowlist (`<path> <reason>`, a directory ends in /; a line without a reason is refused).
+reference is caught in a docker run/create/pull statement (shell words parsed with shlex), a workflow env value (an upper-case key
+with IMAGE, IMG, CONTAINER or REF in it, or a value with a repository path), a keyed `image:`/`FROM` line, a quoted literal, the
+assignment of an image variable (a name with image, img, container or ref in it, or a value with a repository path and a tag), and
+the `image` of a Bazel `oci.pull` in MODULE.bazel (its tag and digest are separate attributes, so a bare name is caught too). A
+reference without a registry host counts only with a Docker Hub shape (`[namespace/]repository`, the namespace a Docker ID or
+`library`, no source file name), so a path:line literal is not one. A line may vouch for a direct pull with `registry-ok: <why>`
+(on it or the line above). Skipped: Markdown, the fixtures under tests/*/bad and tests/*/good, the vendored copies of
+.github/shared-scripts and the paths of .github/image-registry-allowlist (`<path> <reason>`, a directory ends in /; a line without
+a reason is refused).
 """
 
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +51,7 @@ DOCKER_ID = re.compile(r"^[a-z0-9]{4,30}$")
 SOURCE_FILE = re.compile(r"\.(py|sh|bash|tf|hcl|rego|ya?ml|json|toml|md|txt|go|rs|js|ts|j2|cfg|conf|ini|sql|bzl|bazel)$")
 IMAGE_NAME = re.compile(r"image|img|container|ref", re.I)
 BAZEL_IMAGE = re.compile(r"""^\s*image\s*=\s*["'](?P<ref>[^"']+)["']""")
+ENV_VALUE = re.compile(r"""^\s*(?P<name>[A-Z_][A-Z0-9_]*):\s+["']?(?P<ref>[^\s"'#]+)["']?\s*(?:#.*)?$""")
 KEYED = re.compile(r"""^\s*(?:-\s*)?(?:image|container|FROM|from)[:\s]+["']?(?P<ref>[^\s"'#]+)""")
 
 
@@ -75,9 +79,18 @@ def direct(ref):
 
 def positional(text, python):
     """The image of a docker run/create/pull statement: the first word that is no option and no option value."""
-    words = [w for w in re.split(r"[\s,]+", text) if w and w != "+"]
-    quoted = [bool(re.match(r"""^[\[(]*f?["']""", w)) or i == 0 for i, w in enumerate(words)]
-    words = [w.strip("\"',[]()") for w in words]
+    words = None
+    if not python:
+        try:
+            words = shlex.split(text.rstrip().rstrip("\\"), comments=True)
+        except ValueError:
+            words = None
+    if words is not None:
+        quoted = [True] * len(words)
+    else:
+        words = [w for w in re.split(r"[\s,]+", text) if w and w != "+"]
+        quoted = [bool(re.match(r"""^[\[(]*f?["']""", w)) or i == 0 for i, w in enumerate(words)]
+        words = [w.strip("\"',[]()") for w in words]
     i = 0
     while i < len(words) and not (words[i] == "docker"):
         i += 1
@@ -118,6 +131,12 @@ def violations(path, text):
         if hit is None:
             m = ASSIGN.match(line)
             if m and not path.endswith((".yml", ".yaml")):
+                ref = m.group("ref")
+                if (":" in ref or "@" in ref) and direct(ref) and (IMAGE_NAME.search(m.group("name")) or "/" in ref):
+                    hit = ref
+        if hit is None and path.endswith((".yml", ".yaml")):
+            m = ENV_VALUE.match(line)
+            if m:
                 ref = m.group("ref")
                 if (":" in ref or "@" in ref) and direct(ref) and (IMAGE_NAME.search(m.group("name")) or "/" in ref):
                     hit = ref
