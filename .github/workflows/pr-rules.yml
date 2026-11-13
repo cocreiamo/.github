@@ -1,0 +1,98 @@
+# Reusable: the rules a title and the commits of a PR meet together (shared/scripts/pr-rules, embedded below by
+# tools/embed-scripts.sh): every commit Conventional, the title type the strongest commit type, a docs: title without code. It runs on
+# every edit of the title, which the ci workflow does not, so renaming fix: to chore: after the test-first check passed is refused.
+# Callers:
+#   on: {pull_request: {types: [opened, edited, synchronize, reopened]}}
+#   concurrency: {group: "${{ github.workflow }}-${{ github.event.pull_request.number }}", cancel-in-progress: true}
+#   jobs: {pr-rules: {permissions: {contents: read}, uses: cocreiamo/.github/.github/workflows/pr-rules.yml@<sha>}}
+# The required check is `pr-rules / check`.
+name: pr-rules
+on:
+  workflow_call: {}
+permissions: {}
+jobs:
+  check:
+    runs-on: ${{ fromJSON(github.repository_visibility == 'public' && '"ubuntu-24.04"' || '["self-hosted","cocreiamo-ci-light"]') }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: pr rules
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SCRIPT: |
+            #!/usr/bin/env bash
+            #MISE description="PR rules: every non-merge commit of BASE..HEAD is a Conventional Commit or a Revert or Reapply subject as git writes it (the one the automatic revert PR carries, counted among the other types), the title type is the strongest type of the branch (fix > feat > the rest), a docs: title changes only docs/ directories and *.md. Usage: pr-rules --title TITLE [BASE [HEAD]]"
+            set -euo pipefail
+            title="" base=origin/main head=HEAD
+            args=()
+            while [[ $# -gt 0 ]]; do
+              case $1 in
+              --title)
+                title=${2:?--title needs a value}
+                shift 2
+                ;;
+              *)
+                args+=("$1")
+                shift
+                ;;
+              esac
+            done
+            [ "${#args[@]}" -lt 1 ] || base=${args[0]}
+            [ "${#args[@]}" -lt 2 ] || head=${args[1]}
+            [ -n "$title" ] || {
+              echo "refused: --title is required" >&2
+              exit 2
+            }
+
+            conventional='^(feat|fix|docs|test|chore|refactor|perf|ci|build|style|revert)(\([^)]*\))?!?: .'
+            type_of() { sed -E 's/^([a-z]+).*/\1/' <<<"$1"; }
+            git_own='^(Revert|Reapply) ".+"$'
+            class_of() { case "$1" in fix | feat) echo "$1" ;; *) echo rest ;; esac }
+
+            status=0
+            if ! grep -qE "$conventional" <<<"$title"; then
+              echo "refused: the title \"$title\" is not a Conventional Commit" >&2
+              exit 1
+            fi
+
+            strongest=rest
+            while read -r sha subject; do
+              [ -n "$sha" ] || continue
+              if grep -qE "$git_own" <<<"$subject"; then
+                continue
+              fi
+              if ! grep -qE "$conventional" <<<"$subject"; then
+                echo "refused: ${sha:0:9} \"$subject\" is not a Conventional Commit" >&2
+                status=1
+                continue
+              fi
+              case "$(class_of "$(type_of "$subject")")" in
+              fix) strongest=fix ;;
+              feat) [ "$strongest" = fix ] || strongest=feat ;;
+              esac
+            done < <(git log --no-merges --format='%H %s' "$base..$head")
+
+            title_class="$(class_of "$(type_of "$title")")"
+            if [ "$title_class" != "$strongest" ]; then
+              echo "refused: the title \"$title\" is a $title_class change but the strongest commit type of the branch is $strongest (fix > feat > the rest); the title names what the branch does" >&2
+              status=1
+            fi
+
+            if [ "$(type_of "$title")" = docs ]; then
+              outside="$(git -c core.quotePath=false diff --name-only "$base...$head" | { grep -Ev '(^|/)docs/|\.md$' || [ $? -eq 1 ]; })"
+              if [ -n "$outside" ]; then
+                echo "refused: a docs: title, but the PR changes files outside docs/ directories (at any depth) and *.md; use the type of the code change:" >&2
+                echo "$outside" >&2
+                status=1
+              fi
+            fi
+            [ "$status" -ne 0 ] || echo "pr-rules: ok"
+            exit "$status"
+        run: bash -c "$SCRIPT" pr-rules --title "$PR_TITLE" "$(git merge-base "$BASE_SHA" HEAD)" HEAD

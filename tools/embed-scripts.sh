@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Writes shared/scripts and shared/config into .github/workflows/shared-rules.yml (and the founder section, as the text the check holds CLAUDE.md to) as the base64 of a gzipped tar (a caller's token cannot
 # read this private repository's files, so the workflow carries the scripts it compares against), and
-# shared/scripts/stalled_prs.py into .github/workflows/stalled-prs.yml and shared/scripts/mark_conflicts.py into .github/workflows/dirty-prs.yml
+# shared/scripts/stalled_prs.py into .github/workflows/stalled-prs.yml, shared/scripts/mark_conflicts.py into .github/workflows/dirty-prs.yml
+# and shared/scripts/pr-rules into .github/workflows/pr-rules.yml
 # (the reusable workflows run them from there).
 # tests/shared-scripts.sh, tests/shared-configs.sh and tests/stalled-prs.sh and tests/maintenance-reusables.sh fail until this has been run after a change to shared/scripts or shared/config.
 set -euo pipefail
@@ -59,3 +60,4 @@ embed_chunks .github/workflows/shared-rules.yml CONFIGS_BUNDLE "$config_bundle"
 embed .github/workflows/shared-rules.yml '^ +CANONICAL: \\|-$' "$(cat shared/working-with-the-founder.md)"
 embed .github/workflows/stalled-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/stalled_prs.py)"
 embed .github/workflows/dirty-prs.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/mark_conflicts.py)"
+embed .github/workflows/pr-rules.yml '^ +SCRIPT: \\|$' "$(cat shared/scripts/pr-rules)"
