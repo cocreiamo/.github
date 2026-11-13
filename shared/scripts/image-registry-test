@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # image-registry-check (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture trees: a script, test or workflow
 # that pulls straight from Docker Hub, ghcr.io, quay.io or registry.k8s.io is refused (Docker Hub answers 429 to the shared runner, the
-# registry refuses what is private), whether the reference sits in a docker statement, a keyed image line, a quoted literal or a shell
+# registry refuses what is private), whether the reference sits in a docker statement (option values with spaces included), a workflow
+# env value, a keyed image line, a quoted literal or a shell
 # or Python assignment of an image variable, or the image of a Bazel oci.pull in MODULE.bazel; a pull through registry.cocreiamo.com,
 # a URL, plain words, a vouched line with a reason, a fixture, a Markdown file, an allowlisted path and a path:line literal (no
 # Docker Hub repository shape) pass. These fixtures are the ones every repository shares.
@@ -48,6 +49,16 @@ docker run --rm "$image" true'
   refused tools/assign-quoted.sh 'export BASE_IMAGE="alpine:3.22"'
   refused tools/assign-org.sh 'curl_img=curlimages/curl:8.22.0'
   refused lib/assign.py 'pg_image = "postgres:18.1"'
+  refused tools/user.sh 'docker run --rm --network host --user "$(id -u)" -v "$work:/k:ro" -e HOME=/tmp robustadev/krr:v1.31.3 \
+  simple'
+  refused .github/workflows/env.yml 'jobs:
+  diff:
+    env:
+      DIFF_IMAGE: dagandersen/argocd-diff-preview:v0.2.17
+    steps:
+      - run: docker run --rm "$DIFF_IMAGE"'
+  refused .github/workflows/env-host.yml 'env:
+  TOOL_REF: ghcr.io/acme/tool:1.2'
   refused MODULE.bazel 'oci.pull(
     name = "nginx",
     digest = "sha256:b2f1f342b0b5a6ff6a83e72b553adac1dc5ec6cf27389f40197c675814b0536f",
@@ -81,6 +92,12 @@ put vendor/up/run.sh 'docker run --rm busybox true'
 printf 'tools\nlib\nci\nvendor\n.github/workflows\ndocs\n' > "$tmp/r/.github/image-registry-paths"
 put other/outside.sh 'docker run --rm busybox true'
 mkdir -p "$tmp/r/.github"
+put .github/workflows/env-ok.yml 'env:
+  DIFF_IMAGE: registry.cocreiamo.com/dockerhub/dagandersen/argocd-diff-preview:v0.2.17
+  MODE: read:write
+  SHELL_OPTS: -euo:pipefail
+  TARGET: tests/policy/rules.rego:42'
+put tools/user-ok.sh 'docker run --rm --user "$(id -u)" -v "$work:/k:ro" registry.cocreiamo.com/dockerhub/robustadev/krr:v1.31.3 simple'
 put MODULE.bazel 'oci.pull(
     name = "nginx",
     image = "registry.cocreiamo.com/dockerhub/library/nginx",
