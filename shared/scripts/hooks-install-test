@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # hooks-install (shared/scripts, or its vendored copy next to testlib.sh), the mise postinstall of every repository, on a throwaway
-# clone with a worktree: with core.hooksPath set it warns, names the one-time cutover on the main checkout and leaves the shared
-# configuration untouched, from the main checkout and from a worktree alike; with core.hooksPath unset it runs `pre-commit install`.
+# clone with a worktree. core.hooksPath set to a directory that still holds a real pre-commit hook: it warns, names the one-time
+# cutover on the main checkout and leaves the shared configuration untouched, from the main checkout and from a worktree alike.
+# core.hooksPath set to a directory that no longer holds a hook, or only the hooks-moved shim: from the main checkout it unsets
+# core.hooksPath and runs `pre-commit install` (otherwise git would silently run no hook at all); from a worktree it only warns.
+# core.hooksPath unset: it runs `pre-commit install`.
 # shellcheck disable=SC1091,SC2154 # the library is a sibling file; $tmp comes from it
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -18,16 +21,37 @@ git_repo "$tmp/main"
 stub_bin pre-commit 'echo "$*" >> "$PRE_COMMIT_CALLS"'
 export PRE_COMMIT_CALLS="$tmp/calls"
 
+mkdir -p "$tmp/main/hooks" "$tmp/wt/hooks"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/main/hooks/pre-commit"
+cp "$tmp/main/hooks/pre-commit" "$tmp/wt/hooks/pre-commit"
 for where in wt main; do
   : > "$tmp/calls"
   "$G" -C "$tmp/main" config core.hooksPath hooks
   (cd "$tmp/$where" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed in $where with core.hooksPath set"; }
-  [ "$("$G" -C "$tmp/main" config --get core.hooksPath)" = hooks ] || fail "hooks-install in $where changed the core.hooksPath every worktree shares"
+  [ "$("$G" -C "$tmp/main" config --get core.hooksPath)" = hooks ] || fail "hooks-install in $where changed the core.hooksPath every worktree shares while it still holds a real hook"
   [ ! -s "$tmp/calls" ] || fail "hooks-install in $where ran pre-commit while core.hooksPath is set"
   if ! { grep -qF "main checkout" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" && grep -qF "$tmp/main" "$tmp/out"; }; then
     cat "$tmp/out" >&2
     fail "hooks-install in $where does not name the one-time cutover on the main checkout ($tmp/main)"
   fi
+done
+
+for shape in gone shim; do
+  rm -f "$tmp/main/hooks/pre-commit" "$tmp/wt/hooks/pre-commit"
+  if [ "$shape" = shim ]; then
+    for d in main wt; do printf '#!/bin/sh\n# cocreiamo-hooks-moved\nexit 1\n' > "$tmp/$d/hooks/pre-commit"; done
+  fi
+  "$G" -C "$tmp/main" config core.hooksPath hooks
+  : > "$tmp/calls"
+  (cd "$tmp/wt" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed in wt with a $shape hook"; }
+  [ "$("$G" -C "$tmp/main" config --get core.hooksPath)" = hooks ] || fail "hooks-install in a worktree changed the shared core.hooksPath ($shape hook)"
+  [ ! -s "$tmp/calls" ] || fail "hooks-install in a worktree ran pre-commit ($shape hook)"
+  (cd "$tmp/main" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed in main with a $shape hook"; }
+  if "$G" -C "$tmp/main" config --get core.hooksPath >/dev/null; then
+    cat "$tmp/out" >&2
+    fail "hooks-install on the main checkout left core.hooksPath on a directory with no real hook ($shape): git would run no hook at all"
+  fi
+  [ "$(cat "$tmp/calls")" = install ] || fail "hooks-install on the main checkout did not run 'pre-commit install' after the cutover ($shape hook)"
 done
 
 "$G" -C "$tmp/main" config --unset core.hooksPath
