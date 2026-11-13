@@ -19,7 +19,12 @@ fetch=$(step "fetch the vendored scripts" .run)
 
 mkdir "$tmp/embedded"
 base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
-diff -r "$scripts" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from $scripts: run tools/embed-scripts.sh"
+mkdir "$tmp/tracked"
+git ls-files -z -- "$scripts" | while IFS= read -r -d '' f; do
+  mkdir -p "$(dirname "$tmp/tracked/${f#"$scripts"/}")"
+  cp -p "$f" "$tmp/tracked/${f#"$scripts"/}"
+done
+diff -r "$tmp/tracked" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from the tracked files of $scripts (an untracked or ignored file must never be embedded): run tools/embed-scripts.sh"
 for f in "$scripts"/*; do
   [ "$(test -x "$f" && echo x)" = "$(test -x "$tmp/embedded/${f##*/}" && echo x)" ] || fail "the executable bit of ${f##*/} differs in the embedded bundle"
 done

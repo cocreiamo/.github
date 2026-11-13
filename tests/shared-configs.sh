@@ -21,7 +21,12 @@ grep -qx '.github/shared-configs' <<<"$sparse" || fail "the sparse checkout does
 
 mkdir "$tmp/embedded"
 base64 -d <<<"$bundle" | tar -xzf - -C "$tmp/embedded"
-diff -r "$configs" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from $configs: run tools/embed-scripts.sh"
+mkdir "$tmp/tracked"
+git ls-files -z -- "$configs" | while IFS= read -r -d '' f; do
+  mkdir -p "$(dirname "$tmp/tracked/${f#"$configs"/}")"
+  cp -p "$f" "$tmp/tracked/${f#"$configs"/}"
+done
+diff -r "$tmp/tracked" "$tmp/embedded" >/dev/null || fail "the bundle embedded in $wf differs from the tracked files of $configs (an untracked or ignored file must never be embedded): run tools/embed-scripts.sh"
 
 for name in gitignore .editorconfig .yamllint.yaml ruff.toml .shellcheckrc .gitleaks.toml .typos.toml .markdownlint-cli2.yaml .prettierrc.json .hadolint.yaml .vale.ini \
   .vale/styles/Cocreiamo/Banned.yml .vale/styles/Cocreiamo/EnglishOnly.yml; do
