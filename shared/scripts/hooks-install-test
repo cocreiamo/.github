@@ -54,7 +54,7 @@ for shape in gone shim; do
   [ "$(cat "$tmp/calls")" = install ] || fail "hooks-install on the main checkout did not run 'pre-commit install' after the cutover ($shape hook)"
 done
 
-"$G" -C "$tmp/main" config --unset core.hooksPath
+! "$G" -C "$tmp/main" config --get core.hooksPath >/dev/null || fail "core.hooksPath is still set before the unset case"
 : > "$tmp/calls"
 (cd "$tmp/wt" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed with core.hooksPath unset"; }
 [ "$(cat "$tmp/calls")" = install ] || fail "hooks-install did not run 'pre-commit install' with core.hooksPath unset"
