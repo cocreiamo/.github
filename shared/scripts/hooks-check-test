@@ -44,8 +44,10 @@ fresh; rm "$tmp/r/.pre-commit-config.yaml"; bad "a repository with no config" ".
 fresh "${good//conflict-markers/other}"; bad "a config without conflict-markers" "conflict-markers"
 fresh "${good//        stages: \[pre-push\]/}"; bad "ci-prepush outside the pre-push stage" "ci-prepush"
 fresh; "$G" -C "$tmp/r" config core.hooksPath hooks; bad "a core.hooksPath" "core.hooksPath"
-grep -qF "main checkout ($tmp/r)" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" \
-  || { cat "$tmp/out" >&2; fail "the core.hooksPath advice does not name the one-time cutover on the main checkout"; }
+if ! { grep -qF "main checkout ($tmp/r)" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out"; }; then
+  cat "$tmp/out" >&2
+  fail "the core.hooksPath advice does not name the one-time cutover on the main checkout"
+fi
 "$G" -C "$tmp/r" add .pre-commit-config.yaml; "$G" -C "$tmp/r" commit -q -m "chore: root"
 "$G" -C "$tmp/r" worktree add -q -b topic "$tmp/wt"
 (cd "$tmp/wt" && "$check") > "$tmp/out" 2>&1 && fail "accepted a core.hooksPath seen from a worktree"

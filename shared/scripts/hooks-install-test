@@ -14,6 +14,7 @@ G=git
 git_repo "$tmp/main"
 "$G" -C "$tmp/main" commit -q --allow-empty -m "chore: root"
 "$G" -C "$tmp/main" worktree add -q -b topic "$tmp/wt"
+# shellcheck disable=SC2016 # the stub body expands when the stub runs, not here
 stub_bin pre-commit 'echo "$*" >> "$PRE_COMMIT_CALLS"'
 export PRE_COMMIT_CALLS="$tmp/calls"
 
@@ -23,8 +24,10 @@ for where in wt main; do
   (cd "$tmp/$where" && "$install") > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "hooks-install failed in $where with core.hooksPath set"; }
   [ "$("$G" -C "$tmp/main" config --get core.hooksPath)" = hooks ] || fail "hooks-install in $where changed the core.hooksPath every worktree shares"
   [ ! -s "$tmp/calls" ] || fail "hooks-install in $where ran pre-commit while core.hooksPath is set"
-  grep -qF "main checkout" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" && grep -qF "$tmp/main" "$tmp/out" \
-    || { cat "$tmp/out" >&2; fail "hooks-install in $where does not name the one-time cutover on the main checkout ($tmp/main)"; }
+  if ! { grep -qF "main checkout" "$tmp/out" && grep -qF "never inside a worktree" "$tmp/out" && grep -qF "$tmp/main" "$tmp/out"; }; then
+    cat "$tmp/out" >&2
+    fail "hooks-install in $where does not name the one-time cutover on the main checkout ($tmp/main)"
+  fi
 done
 
 "$G" -C "$tmp/main" config --unset core.hooksPath
