@@ -31,7 +31,7 @@ embed() {
 # keys the workflow declares cannot hold it, unused keys are left empty.
 embed_chunks() {
   local wf=$1 name=$2 keys chunks k
-  keys=$(grep -cE "^ +${name}_[0-9]+: \|-$" "$wf" || true)
+  keys=$(grep -cE "^ +${name}_[0-9]+: \|-$" "$wf" || [ $? -eq 1 ])
   printf '%s\n' "$3" | split -l "$CHUNK_LINES" -d -a 2 - "$tmp.chunk."
   chunks=$(find "$(dirname "$tmp")" -maxdepth 1 -name "${tmp##*/}.chunk.*" | wc -l)
   if [ "$chunks" -gt "$keys" ]; then
