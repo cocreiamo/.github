@@ -53,7 +53,7 @@ fixture
 put tools/ok.sh 'echo "see https://ghcr.io/cloudnative-pg is a web page"
 printf '"'"'name:tag and a/b are plain words: %s\n'"'"' "$x"
 docker run --rm --network host registry.cocreiamo.com/dockerhub/library/busybox:1.37 true
-docker create --name x registry.cocreiamo.com/ghcr/cloudnative-pg/postgresql:18.1
+docker create --rm --name x registry.cocreiamo.com/ghcr/cloudnative-pg/postgresql:18.1
 docker run --rm registry.cocreiamo.com/quay/prometheus/busybox:latest true
 image=registry.cocreiamo.com/dockerhub/library/alpine:3.22
 mode=read:write
