@@ -7,7 +7,6 @@ extend-exclude = [
   "*.age",
   "*.enc.yaml",
   "platform/dashboards/files/",
-  "platform/traefik-config/plugins/",
   "schemas/kargo/",
   "platform/*/upstream/",
 ]
