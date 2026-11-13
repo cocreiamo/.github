@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # vex_lint.py (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture OpenVEX documents: a not_affected statement
-# without a known justification or a real impact statement, a statement with no product or vulnerability, and a document without its
-# header are refused; a complete document passes. The fixtures every repository shares.
+# without a known justification or a real impact statement, an affected statement whose action statement says no «review by
+# YYYY-MM-DD», a statement with no product or vulnerability, and a document without its header are refused; a complete document
+# passes. The fixtures every repository shares.
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 lint="$repo/shared/scripts/vex_lint.py"
@@ -21,4 +22,12 @@ for bad in "${good/vulnerable_code_not_in_execute_path/because}" "${good/the par
 done
 doc "$good" '"@context": "https://openvex.dev/ns/v0.2.0"'
 if python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1; then fail "accepted a document without @id, author and timestamp"; fi
+affected='{"vulnerability": {"name": "CVE-2026-0002"}, "products": [{"@id": "pkg:oci/app"}], "status": "affected", "action_statement": "no fixed release yet; review by 2026-12-01"}'
+doc "$affected"
+python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "refused an affected statement with a review date"; }
+for bad in "${affected/; review by 2026-12-01/}" "${affected/review by 2026-12-01/review soon}" "${affected/, \"action_statement\": \"no fixed release yet; review by 2026-12-01\"/}"; do
+  doc "$bad"
+  if python3 -I "$lint" "$tmp/d.json" > "$tmp/out" 2>&1; then fail "accepted an affected statement without «review by YYYY-MM-DD»: $bad"; fi
+  grep -qF "review by YYYY-MM-DD" "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal does not ask for the review date"; }
+done
 echo "vex_lint: ok"
