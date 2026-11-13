@@ -7,7 +7,8 @@ must carry -I (or -P, which keeps PYTHONPATH) or go through `uv run --script`. A
 looked at, outside quoted strings: after a line start, ; & | ( ` $( , the keywords then/do/else/exec/time/!, variable assignments and the
 wrappers env, timeout, nice and uv run. A line may carry `# python-isolated: allow <reason>`. Shebangs are not calls:
 a script run by its shebang reads its own directory, which is this repository's code. Fixtures under tests/*/bad and
-tests/*/good, and the vendored copies listed in .github/shared-scripts, are skipped.
+tests/*/good, the vendored copies listed in .github/shared-scripts and the paths of .github/python-isolated-allowlist
+(`<path> <reason>`, a directory ends in /; a line without a reason is refused) are skipped.
 Prints the offenders as path:line and their count; exits 1 when there is one.
 """
 
@@ -128,12 +129,31 @@ def offends(line, file_kind):
     return any(segment_offends(s) for s in SPLIT.split(code))
 
 
+def allowlist(root):
+    paths, problems = set(), []
+    f = root / ".github" / "python-isolated-allowlist"
+    if f.is_file():
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            path, _, reason = line.strip().partition(" ")
+            if not reason.strip():
+                problems.append(f".github/python-isolated-allowlist: '{path}' has no reason")
+            paths.add(path)
+    return paths, problems
+
+
+def allowed(rel, paths):
+    return any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in paths)
+
+
 def main(argv):
     root = pathlib.Path(argv[1] if len(argv) > 1 else ".").resolve()
     skip = vendored(root)
-    offenders, problems = [], []
+    exempt, problems = allowlist(root)
+    offenders = []
     for rel in tracked(root):
-        if rel in skip or not (root / rel).is_file() or (root / rel).is_symlink():
+        if rel in skip or allowed(rel, exempt) or not (root / rel).is_file() or (root / rel).is_symlink():
             continue
         file_kind = kind(root, rel)
         if file_kind is None:
