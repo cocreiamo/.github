@@ -2,8 +2,8 @@
 # image-registry-check (shared/scripts, or its vendored copy named in .github/shared-scripts) on fixture trees: a script, test or workflow
 # that pulls straight from Docker Hub, ghcr.io, quay.io or registry.k8s.io is refused (Docker Hub answers 429 to the shared runner, the
 # registry refuses what is private), whether the reference sits in a docker statement, a keyed image line, a quoted literal or a shell
-# or Python assignment of an image variable; a pull through registry.cocreiamo.com, a URL, plain words, a vouched line with a reason,
-# a fixture, a Markdown file and an allowlisted path pass. These fixtures are the ones every repository shares.
+# or Python assignment of an image variable, or the image of a Bazel oci.pull in MODULE.bazel; a pull through registry.cocreiamo.com,
+# a URL, plain words, a vouched line with a reason, a fixture, a Markdown file and an allowlisted path pass. These fixtures are the ones every repository shares.
 # shellcheck disable=SC2016 # the fixtures are script text, not expanded here
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
@@ -47,6 +47,17 @@ docker run --rm "$image" true'
   refused tools/assign-quoted.sh 'export BASE_IMAGE="alpine:3.22"'
   refused tools/assign-org.sh 'curl_img=curlimages/curl:8.22.0'
   refused lib/assign.py 'pg_image = "postgres:18.1"'
+  refused MODULE.bazel 'oci.pull(
+    name = "nginx",
+    digest = "sha256:b2f1f342b0b5a6ff6a83e72b553adac1dc5ec6cf27389f40197c675814b0536f",
+    image = "docker.io/library/nginx",
+    tag = "1.31-alpine3.24-otel",
+)'
+  refused MODULE.bazel 'oci.pull(
+    name = "nginx",
+    image = "nginx",
+    tag = "1.31",
+)'
 }
 
 fixture
@@ -69,6 +80,16 @@ put vendor/up/run.sh 'docker run --rm busybox true'
 printf 'tools\nlib\nci\nvendor\n.github/workflows\ndocs\n' > "$tmp/r/.github/image-registry-paths"
 put other/outside.sh 'docker run --rm busybox true'
 mkdir -p "$tmp/r/.github"
+put MODULE.bazel 'oci.pull(
+    name = "nginx",
+    image = "registry.cocreiamo.com/dockerhub/library/nginx",
+    tag = "1.31",
+)
+oci.pull(
+    name = "curl",
+    image = "cgr.dev/chainguard/curl",
+    tag = "latest-dev",
+)'
 printf 'vendor/up/ upstream scripts, run on a developer machine only\n' > "$tmp/r/.github/image-registry-allowlist"
 accepted_tree "pulls through Harbor, words, a URL, a vouched line, a fixture, a document and an allowlisted directory"
 
