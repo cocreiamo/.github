@@ -20,13 +20,13 @@ block() {
     $0 ~ "^ +" key ": \\|-$" { f = 1; match($0, /^ */); ind = RLENGTH + 2 }
   ' <<<"$workflow"
 }
-# heredoc <name>: the body of the here-document <<'<name>' of a run script (the bundles: an env value is capped by the kernel)
-heredoc() {
-  awk -v name="$1" '
-    f && $0 ~ "^ *" name "$" { exit }
-    f { sub(/^ +/, ""); print }
-    index($0, "<<\x27" name "\x27") { f = 1 }
-  ' <<<"$workflow"
+# chunks <name>: the bundle spread over the block scalars <name>_1, <name>_2, ... (one env value is capped by the kernel)
+chunks() {
+  local k=1
+  while grep -qE "^ +$1_$k: \|-$" <<<"$workflow"; do
+    block "$1_$k"
+    k=$((k + 1))
+  done
 }
 canonical=$(block CANONICAL)
 [ "${canonical%%$'\n'*}" = "$heading" ] || { echo "no canonical section in shared-rules.yml" >&2; exit 1; }
@@ -46,7 +46,7 @@ vendor() {
   local manifest=$1 key=$2 re=$3 name path _
   [ -f "$manifest" ] || return 0
   mkdir -p "$canon/$key"
-  heredoc "$key" | base64 -d | tar -xzf - -C "$canon/$key"
+  chunks "$key" | base64 -d | tar -xzf - -C "$canon/$key"
   while read -r name path _; do
     case ${name:-} in ''|'#'*) continue ;; esac
     [[ $name =~ $re ]] && [ -f "$canon/$key/$name" ] && [ -n "${path:-}" ] || { echo "$manifest: bad line: $name ${path:-}" >&2; exit 1; }

@@ -17,7 +17,9 @@ usage: workflow-hygiene-check.py [repository root]   (default: the working direc
    trigger runs its checks only as `mise run ci -- <part>`: a `run:` that calls another `mise run`, a script of tests/, hooks/
    or shared/scripts/, or `bash tests/...` defines a check a second time in YAML, where the pre-push hook and `affected` do not see it.
 5. No env value (workflow, job or step) is longer than 100000 bytes: the kernel caps one variable at 131072, and a step past it
-   never starts ("Argument list too long"); a bundle belongs in a here-document of the run script.
+   never starts ("Argument list too long"); a large bundle is spread over several env keys.
+6. No `run:` script is longer than 60000 bytes: actionlint hands the script to shellcheck through a pipe and hangs past the
+   64 KiB pipe buffer, so the lint never ends; data belongs in env keys, code in a script file.
 
 The kind of a SHA never changes: it is cached in $WORKFLOW_HYGIENE_KINDS (default ~/.cache/workflow-hygiene/<owner>/<repo>/<sha>,
 content `commit` or `tag`), else read from the GitHub API with $GH_TOKEN, $GITHUB_TOKEN or `gh auth token`.
@@ -124,6 +126,7 @@ def ci_entry_problems(path, doc):
 
 
 ENV_MAX = 100000
+RUN_MAX = 60000
 
 
 def check_workflow(path, ci_entry=False):
@@ -149,7 +152,15 @@ def check_workflow(path, ci_entry=False):
         for key, value in (env or {}).items() if isinstance(env, dict) else []:
             size = len(f"{key}={value}".encode())
             if size > ENV_MAX:
-                problems.append(f"{path}: {where}: env {key} is {size} bytes, over {ENV_MAX}: move it into a here-document of the run script")
+                problems.append(f"{path}: {where}: env {key} is {size} bytes, over {ENV_MAX}: spread it over several env keys")
+    for name, job in jobs.items():
+        for i, st in enumerate((job.get("steps") or []) if isinstance(job, dict) else []):
+            run = st.get("run") if isinstance(st, dict) else None
+            if isinstance(run, str) and len(run.encode()) > RUN_MAX:
+                problems.append(
+                    f"{path}: job {name} step {i + 1}: run script is {len(run.encode())} bytes, over {RUN_MAX}: "
+                    "move data into env keys and code into a script file"
+                )
     uses = []
     for name, job in jobs.items():
         if not isinstance(job, dict):

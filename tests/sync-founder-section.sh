@@ -38,6 +38,7 @@ if sync "$tmp/none"; then fail "the sync accepted a CLAUDE.md without the sectio
 
 scripts_check=$(yq -N '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .run' "$wf")
 printf '%s\n' "$scripts_check" > "$tmp/scripts-check.sh"
+set -a; eval "$(yq -N -o shell '.jobs.check.steps[] | select(.name == "vendored scripts equal the canonical ones") | .env' "$wf")"; set +a
 scripts_pass() { (cd "$1" && bash "$tmp/scripts-check.sh") >/dev/null 2>&1; }
 mkdir -p "$tmp/vendored/.github" "$tmp/vendored/tasks"
 { printf '# Repo\n\n'; old; } > "$tmp/vendored/CLAUDE.md"
