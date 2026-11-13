@@ -3,7 +3,8 @@
 # python3 call in a shell script, a workflow or a mise task without -I (or -P) puts the working directory or the script's
 # directory first on sys.path, so a planted json.py runs on `import json`; it is refused. `python3 -I`, `python3 -P`,
 # `uv run --script`, a python word that is an argument, a comment, a test fixture and a line marked
-# `# python-isolated: allow <reason>` pass.
+# `# python-isolated: allow <reason>` pass, and so do the paths of .github/python-isolated-allowlist (`<path> <reason>`, a directory
+# ends in /; a line without a reason is refused).
 set -euo pipefail
 repo="$(git rev-parse --show-toplevel)"
 check="$repo/shared/scripts/python-isolated-check"
@@ -73,5 +74,21 @@ accepted "the isolated calls, an argument, a comment, a fixture, a document and 
 fixture
 sh tools/f 'python3 x.py # python-isolated: allow'
 refused "an allow marker without a reason" "reason"
+
+fixture
+mkdir -p "$tmp/r/products/app" "$tmp/r/vendor"
+sh products/app/run.sh 'python3 serve.py'
+sh vendor/build.sh 'python setup.py build'
+sh tools/g 'python3 -I tools/x.py'
+printf '# the product team owns these scripts\nproducts/app/ the product build runs its own modules on purpose\nvendor/build.sh upstream build script, vendored unchanged\n' > "$tmp/r/.github/python-isolated-allowlist"
+accepted "a directory and a file of .github/python-isolated-allowlist, each with a reason"
+sh tools/h 'python3 x.py'
+refused "a call outside the allowlisted paths" "tools/h:2"
+
+fixture
+mkdir -p "$tmp/r/vendor"
+sh vendor/build.sh 'python setup.py build'
+printf 'vendor/build.sh\n' > "$tmp/r/.github/python-isolated-allowlist"
+refused "an allowlist line without a reason" "no reason"
 
 echo "python-isolated-check: ok"
