@@ -21,7 +21,7 @@ python = "3.13.18"
 lockfile = true
 
 [hooks]
-postinstall = "git config --unset-all core.hooksPath; pre-commit install"
+postinstall = "shared/scripts/hooks-install"
 
 [tasks."wt:gc"]
 description = "Remove the worktrees and branches whose PR is merged and archive stale ones: mise run wt:gc [-- --dry-run]"

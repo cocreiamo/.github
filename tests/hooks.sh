@@ -4,5 +4,5 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 shared/scripts/hooks-check-test
 shared/scripts/hooks-install-test
-[ "$(yq -N -p toml '.hooks.postinstall' mise.toml)" = shared/scripts/hooks-install ] || { echo "FAIL: the mise postinstall must be shared/scripts/hooks-install (it never touches core.hooksPath, which every worktree shares)" >&2; exit 1; }
+[ "$(yq -N -p toml -oy '.hooks.postinstall' mise.toml)" = shared/scripts/hooks-install ] || { echo "FAIL: the mise postinstall must be shared/scripts/hooks-install (it never touches core.hooksPath, which every worktree shares)" >&2; exit 1; }
 HOOKS_CHECK_CONFIG_ONLY=1 shared/scripts/hooks-check

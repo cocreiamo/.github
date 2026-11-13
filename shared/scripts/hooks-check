@@ -56,9 +56,7 @@ def config_problems(config):
             continue
         stages = hook.get("stages") or config.get("default_stages") or ["pre-commit"]
         if stage not in stages:
-            problems.append(
-                f"the shared hook {hook_id} must run at {stage} (stages: {stages})"
-            )
+            problems.append(f"the shared hook {hook_id} must run at {stage} (stages: {stages})")
     return problems, declared
 
 
@@ -73,13 +71,13 @@ def main():
     problems, declared = config_problems(yaml.safe_load(path.read_text()) or {})
     if os.environ.get("HOOKS_CHECK_CONFIG_ONLY") != "1":
         if git("config", "--get", "core.hooksPath"):
+            main = pathlib.Path(git("rev-parse", "--path-format=absolute", "--git-common-dir") or ".git").parent
             problems.append(
-                "core.hooksPath is set: git runs that directory and the framework's hooks never fire"
-                " (git config --unset core.hooksPath)"
+                "core.hooksPath is set: git runs that directory and the framework's hooks never fire. It is shared by every"
+                f" worktree: the one-time cutover runs on the main checkout ({main}), never inside a worktree:"
+                f" cd '{main}' && git config --unset core.hooksPath && pre-commit install"
             )
-        hooks_dir = pathlib.Path(
-            git("rev-parse", "--git-path", "hooks") or ".git/hooks"
-        )
+        hooks_dir = pathlib.Path(git("rev-parse", "--git-path", "hooks") or ".git/hooks")
         installed = {}
         if hooks_dir.is_dir():
             for f in hooks_dir.iterdir():
@@ -87,25 +85,17 @@ def main():
                     installed[f.name] = MARKER in f.read_text(errors="replace")
         for kind in declared:
             if not installed.get(kind):
-                problems.append(
-                    f"the declared hook type {kind} is not installed by the framework (pre-commit install)"
-                )
+                problems.append(f"the declared hook type {kind} is not installed by the framework (pre-commit install)")
         for kind, ours in sorted(installed.items()):
             if kind not in declared or not ours:
-                problems.append(
-                    f".git/hooks/{kind} is not a hook the framework installed for a declared type: remove it, or declare it"
-                )
+                problems.append(f".git/hooks/{kind} is not a hook the framework installed for a declared type: remove it, or declare it")
     for p in problems:
         print(f"hooks-check: {p}", file=sys.stderr)
     if problems:
         return 1
     print(
         "hooks-check: the pre-commit framework runs the shared hooks"
-        + (
-            ""
-            if os.environ.get("HOOKS_CHECK_CONFIG_ONLY") == "1"
-            else ", installed as declared"
-        )
+        + ("" if os.environ.get("HOOKS_CHECK_CONFIG_ONLY") == "1" else ", installed as declared")
     )
     return 0
 

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# hooks-install: the mise postinstall of every repository. Runs `pre-commit install` only when core.hooksPath is unset. Otherwise
+# it warns and changes nothing: core.hooksPath lives in the configuration every worktree of a clone shares, so unsetting it
+# from a worktree would switch the hooks of the main checkout and of every other worktree at once.
+set -euo pipefail
+if path=$(git config --get core.hooksPath); then
+  main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  echo "hooks-install: core.hooksPath is set to '$path' in the configuration every worktree shares, so the pre-commit hooks stay off; left as it is." >&2
+  echo "hooks-install: the one-time cutover runs on the main checkout ($main), never inside a worktree: cd '$main' && git config --unset core.hooksPath && pre-commit install" >&2
+  exit 0
+fi
+exec pre-commit install
